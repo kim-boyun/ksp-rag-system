@@ -583,7 +583,7 @@ make up-server
 make ask-elastic Q="질문"
 ```
 
-**자세한 가이드**: [docs/STAGE9_COMPLETION.md](docs/STAGE9_COMPLETION.md)
+**자세한 가이드**: [docs/ELASTICSEARCH_GUIDE.md](docs/ELASTICSEARCH_GUIDE.md)
 
 ---
 
@@ -624,7 +624,7 @@ make ui-server
 - ✅ 히스토리 추적
 - ✅ 메타데이터 표시
 
-**자세한 가이드**: [docs/STAGE10_COMPLETION.md](docs/STAGE10_COMPLETION.md)
+**자세한 가이드**: [docs/SERVER_DEPLOYMENT.md](docs/SERVER_DEPLOYMENT.md)
 
 ---
 

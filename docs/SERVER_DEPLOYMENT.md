@@ -536,9 +536,10 @@ sleep 30
 ## 📚 추가 참고자료
 
 - **README.md**: 전체 시스템 개요
-- **WORKFLOW.md**: RAG 워크플로우 상세
 - **docs/ELASTICSEARCH_GUIDE.md**: Elasticsearch 운영 가이드
-- **docs/STAGE9_COMPLETION.md**: GPU LLM 통합 문서
+- **docs/LLM_SWITCHING_GUIDE.md**: LLM 전환 가이드
+- **docs/NETWORK_ACCESS_GUIDE.md**: 네트워크 접근 권한 가이드
+- **docs/architecture/overview.md**: 시스템 아키텍처 개요
 
 ---
 

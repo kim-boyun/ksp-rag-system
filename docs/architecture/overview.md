@@ -203,5 +203,5 @@ Query → Embedding (BGE) → 검색 (BM25 + kNN) → Top-K 문서
 ## 📚 관련 문서
 
 - [배포 가이드](../SERVER_DEPLOYMENT.md)
-- [Refactor Step 2: Compose Split](./STEP2_COMPLETION.md)
-- [Refactor Step 3: External vLLM Endpoint](./STEP3_COMPLETION.md)
+- [LLM 전환 가이드](../LLM_SWITCHING_GUIDE.md)
+- [네트워크 접근 가이드](../NETWORK_ACCESS_GUIDE.md)
