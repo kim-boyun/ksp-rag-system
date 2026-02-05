@@ -25,8 +25,17 @@ rebuild: ## Docker 이미지 재빌드 (캐시 무시)
 up-local: ## 로컬 모드로 컨테이너 시작
 	docker compose --profile local up -d
 
-up-server: ## 서버 모드로 컨테이너 시작 (Elasticsearch 포함)
+up-server: ## 서버 모드로 컨테이너 시작 (Elasticsearch + LLM)
 	docker compose --profile server up -d
+
+up-server-app-only: ## app+ui만 시작 (기존 Elastic/LLM 사용 시)
+	@echo "기존 Elasticsearch/LLM 사용 - app, ui만 시작"
+	cp .env.server .env 2>/dev/null || true
+	docker compose --profile app-only up -d
+	@echo "UI: http://localhost:8501"
+
+check-server: ## 서버 기존 Elastic/LLM 서비스 확인 (배포 전 실행)
+	@bash scripts/check_server_services.sh
 
 down: ## 모든 컨테이너 종료
 	docker compose down

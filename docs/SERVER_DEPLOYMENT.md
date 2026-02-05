@@ -4,6 +4,45 @@
 
 ---
 
+## 🔍 0단계: 기존 서비스 확인 (배포 전 필수)
+
+서버에 **Elasticsearch**나 **LLM**이 이미 Docker로 실행 중일 수 있습니다.  
+먼저 확인 후 `.env.server` 설정을 결정하세요.
+
+```bash
+cd ~/ksp-rag-system
+make check-server
+```
+
+**또는**:
+```bash
+bash scripts/check_server_services.sh
+```
+
+**확인 항목**:
+- `localhost:9200` → Elasticsearch 응답 여부
+- `localhost:8000` → LLM (vLLM/OpenAI 호환) 응답 여부
+- Docker 컨테이너 목록 (elastic, vllm, llm 등)
+
+**결과에 따른 설정**:
+
+| 상황 | .env.server 설정 | 실행 명령 |
+|------|-----------------|----------|
+| **둘 다 없음** | 기본값 (elasticsearch, llm) | `make up-server` |
+| **Elastic만 있음** | ELASTIC_HOST=host.docker.internal | `make up-server` (LLM만 띄움) |
+| **LLM만 있음** | SERVER_LLM_ENDPOINT=http://host.docker.internal:8000/... | `make up-server` (Elastic만 띄움) |
+| **둘 다 있음** | 둘 다 host.docker.internal | `make up-server-app-only` |
+
+**기존 서비스 사용 시 .env.server 예시**:
+```bash
+# 호스트에서 Elasticsearch (9200), LLM (8000) 실행 중인 경우
+ELASTIC_HOST=host.docker.internal
+ELASTIC_PORT=9200
+SERVER_LLM_ENDPOINT=http://host.docker.internal:8000/v1/completions
+```
+
+---
+
 ## 📋 사전 요구사항
 
 ### 하드웨어
@@ -41,11 +80,12 @@ docker run --rm --gpus all nvidia/cuda:11.8.0-base-ubuntu22.04 nvidia-smi
 
 ```bash
 # 저장소 클론
-git clone <repository-url> /path/to/ksp-rag-system
-cd /path/to/ksp-rag-system
+cd ~
+git clone <repository-url> ksp-rag-system
+cd ksp-rag-system
 
-# 또는 rsync로 로컬에서 복사
-rsync -avz --progress /local/path/ksp-rag-system/ user@server:/remote/path/
+# 기존 서비스 확인 (배포 전 필수!)
+make check-server
 ```
 
 ---
@@ -58,11 +98,11 @@ rsync -avz --progress /local/path/ksp-rag-system/ user@server:/remote/path/
 # .env.server 파일 생성
 cp .env.server.example .env.server
 
-# .env.server 편집
+# check-server 결과를 참고하여 편집
 vim .env.server
 ```
 
-**필수 설정**:
+**기본 설정 (Elastic/LLM 새로 띄우는 경우)**:
 ```bash
 # .env.server
 MODE=server
@@ -81,6 +121,13 @@ SERVER_LLM_MODEL=meta-llama/Llama-2-7b-chat-hf
 # 검색 설정
 TOP_K=12
 RERANK_TOP_K=5
+```
+
+**기존 서비스 사용 시** (`make check-server` 결과 참고):
+```bash
+# 호스트에서 Elasticsearch(9200), LLM(8000) 실행 중이면
+ELASTIC_HOST=host.docker.internal
+SERVER_LLM_ENDPOINT=http://host.docker.internal:8000/v1/completions
 ```
 
 ### 2.2 로컬 API 키 (선택 사항)

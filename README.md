@@ -504,29 +504,33 @@ make ui-server
 git clone <repository-url>
 cd ksp-rag-system
 
-# 2. 환경 설정
-cp .env.server.example .env.server
-# .env.server 편집 (필요시)
+# 2. 기존 서비스 확인 (Elastic/LLM이 이미 있는지)
+make check-server
 
-# 3. Docker 빌드
+# 3. 환경 설정 (check-server 결과 참고)
+cp .env.server.example .env.server
+# .env.server 편집 - 기존 서비스 있으면 host.docker.internal 사용
+
+# 4. Docker 빌드
 make build
 
-# 4. 서버 서비스 시작 (Elasticsearch + vLLM)
-make up-server
+# 5. 서버 서비스 시작
+# 기존 Elastic/LLM 없음 → make up-server
+# 기존 Elastic/LLM 있음 → make up-server-app-only
 
-# 5. 데이터 인제스트
+# 6. 데이터 인제스트
 make ingest
 
-# 6. Elasticsearch 인덱스 빌드
+# 7. Elasticsearch 인덱스 빌드
 make index-elastic
 
-# 7. 스모크 테스트
+# 8. 스모크 테스트
 make smoke-test
 
-# 8. UI 시작
-make ui-server
+# 9. UI 시작
+make ui-server  # 또는 make up-server-app-only 이미 했다면 생략
 
-# 9. 브라우저 접속
+# 10. 브라우저 접속
 # http://<server-ip>:8501
 ```
 
