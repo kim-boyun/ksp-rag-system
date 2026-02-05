@@ -34,6 +34,9 @@ ops/gpu/.env.gpu
 # 데이터 & 모델
 /data/*
 !/data/.gitkeep
+!/data/raw/
+/data/raw/*
+!/data/raw/README.md
 /models/*
 !/models/.gitkeep
 
