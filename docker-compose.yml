@@ -1,0 +1,141 @@
+services:
+  # ================================
+  # RAG 애플리케이션
+  # ================================
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ksp-rag-app
+    env_file:
+      - .env.local  # 로컬 모드 (없으면 .env.local.example 복사 필요)
+    environment:
+      - PYTHONDONTWRITEBYTECODE=1  # Python 캐시 비활성화
+    volumes:
+      - ./:/app  # 전체 프로젝트 마운트 (dev 편의)
+      - model-cache:/root/.cache/huggingface  # 임베딩 모델 캐시
+    networks:
+      - rag-network
+    profiles:
+      - local
+      - server
+    stdin_open: true
+    tty: true
+    command: tail -f /dev/null  # 개발 중 컨테이너 유지
+
+  # ================================
+  # Elasticsearch (서버 모드 전용)
+  # ================================
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.12.0
+    container_name: ksp-rag-elastic
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - "ES_JAVA_OPTS=-Xms2g -Xmx2g"
+    ports:
+      - "9200:9200"
+    volumes:
+      - elastic-data:/usr/share/elasticsearch/data
+    networks:
+      - rag-network
+    profiles:
+      - server
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9200/_cluster/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # ================================
+  # Kibana (선택, Elasticsearch UI)
+  # ================================
+  kibana:
+    image: docker.elastic.co/kibana/kibana:8.12.0
+    container_name: ksp-rag-kibana
+    environment:
+      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+    ports:
+      - "5601:5601"
+    networks:
+      - rag-network
+    profiles:
+      - server
+    depends_on:
+      - elasticsearch
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:5601/api/status || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # ================================
+  # LLM Service (GPU 서버 전용)
+  # ================================
+  llm:
+    image: vllm/vllm-openai:latest
+    container_name: ksp-rag-llm
+    environment:
+      # vLLM 설정
+      - MODEL_NAME=${SERVER_LLM_MODEL:-meta-llama/Llama-2-7b-chat-hf}
+      - TENSOR_PARALLEL_SIZE=1
+      - GPU_MEMORY_UTILIZATION=0.9
+      - MAX_MODEL_LEN=4096
+    ports:
+      - "8000:8000"
+    volumes:
+      - llm-cache:/root/.cache/huggingface  # 모델 캐시
+    networks:
+      - rag-network
+    profiles:
+      - server
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8000/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 300s  # 모델 로딩 시간 고려
+    command: >
+      --model ${SERVER_LLM_MODEL:-meta-llama/Llama-2-7b-chat-hf}
+      --host 0.0.0.0
+      --port 8000
+
+  # ================================
+  # Streamlit UI (로컬/서버 공통)
+  # ================================
+  ui:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ksp-rag-ui
+    env_file:
+      - .env  # Makefile에서 .env.local 또는 .env.server를 .env로 복사
+    environment:
+      - PYTHONDONTWRITEBYTECODE=1
+    volumes:
+      - ./src:/app/src
+      - ./data:/app/data
+      - model-cache:/root/.cache/huggingface
+    ports:
+      - "8501:8501"
+    networks:
+      - rag-network
+    profiles:
+      - ui
+    command: streamlit run src/ui/app.py --server.port=8501 --server.address=0.0.0.0
+
+networks:
+  rag-network:
+    driver: bridge
+
+volumes:
+  elastic-data:
+  llm-cache:       # LLM 모델 캐시
+  model-cache:     # 임베딩 모델 캐시

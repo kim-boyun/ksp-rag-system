@@ -1,0 +1,121 @@
+"""
+Configuration management using pydantic-settings
+Supports local/server mode switching via environment variables
+"""
+from typing import Literal
+from pydantic import Field
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class AppConfig(BaseSettings):
+    """
+    Application configuration
+    Loads from .env.local or .env.server based on MODE
+    """
+    model_config = SettingsConfigDict(
+        env_file=".env.local",
+        env_file_encoding="utf-8",
+        extra="ignore"
+    )
+    
+    # ================================
+    # 실행 모드
+    # ================================
+    mode: Literal["local", "server"] = Field(
+        default="local",
+        description="Execution mode: local (development) or server (production)"
+    )
+    
+    retriever_mode: Literal["local", "elastic"] = Field(
+        default="local",
+        description="Retriever mode: local (BM25+FAISS) or elastic (Elasticsearch)"
+    )
+    
+    # ================================
+    # 로컬 모드 설정
+    # ================================
+    local_embedding_model: str = Field(
+        default="sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
+        description="Local embedding model for BM25+FAISS"
+    )
+    
+    # LLM Provider
+    llm_provider: Literal["local_api", "server_http"] = Field(
+        default="local_api",
+        description="LLM provider: local_api (OpenAI) or server_http (vLLM)"
+    )
+    
+    # LLM API (로컬 개발용)
+    llm_api_type: str = Field(default="openai", description="LLM API type")
+    llm_api_key: str = Field(default="", description="LLM API key")
+    llm_model: str = Field(default="gpt-3.5-turbo", description="LLM model name")
+    llm_temperature: float = Field(default=0.7, ge=0.0, le=2.0)
+    llm_max_tokens: int = Field(default=1000, gt=0)
+    
+    # ================================
+    # 서버 모드 설정
+    # ================================
+    # Elasticsearch
+    elastic_host: str = Field(default="elasticsearch", description="Elasticsearch host")
+    elastic_port: int = Field(default=9200, gt=0, lt=65536)
+    elastic_index_name: str = Field(default="ksp_rag_index", description="Index name")
+    
+    # 서버 LLM (vLLM HTTP endpoint)
+    server_llm_endpoint: str = Field(
+        default="http://vllm:8000/v1/completions",
+        description="vLLM HTTP endpoint"
+    )
+    server_llm_model: str = Field(
+        default="meta-llama/Llama-2-7b-chat-hf",
+        description="Server LLM model"
+    )
+    
+    # ================================
+    # 공통 설정
+    # ================================
+    chunk_size: int = Field(default=512, gt=0, description="Text chunk size")
+    chunk_overlap: int = Field(default=50, ge=0, description="Chunk overlap")
+    
+    top_k: int = Field(default=5, gt=0, description="Number of documents to retrieve")
+    rerank_top_k: int = Field(default=3, gt=0, description="Number of documents after reranking")
+    
+    log_level: str = Field(default="INFO", description="Logging level")
+    
+    @property
+    def is_local_mode(self) -> bool:
+        """Check if running in local mode"""
+        return self.mode == "local"
+    
+    @property
+    def is_server_mode(self) -> bool:
+        """Check if running in server mode"""
+        return self.mode == "server"
+    
+    def get_llm_endpoint(self) -> str:
+        """Get LLM endpoint based on mode"""
+        if self.is_local_mode:
+            return f"openai:{self.llm_model}"
+        return self.server_llm_endpoint
+    
+    def get_retriever_type(self) -> str:
+        """Get retriever type based on mode"""
+        return "bm25+faiss" if self.is_local_mode else "elasticsearch"
+
+
+# Global config instance
+_config: AppConfig | None = None
+
+
+def get_config() -> AppConfig:
+    """Get or create global config instance"""
+    global _config
+    if _config is None:
+        _config = AppConfig()
+    return _config
+
+
+def reload_config() -> AppConfig:
+    """Reload configuration (useful for testing)"""
+    global _config
+    _config = AppConfig()
+    return _config
