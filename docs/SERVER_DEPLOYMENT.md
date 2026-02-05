@@ -28,55 +28,62 @@ bash scripts/check_server_services.sh
 
 | 상황 | .env.server 설정 | 실행 명령 |
 |------|-----------------|----------|
-| **둘 다 없음** | 기본값 (elasticsearch, llm) | `make up-server` |
-| **Elastic만 있음** | ELASTIC_HOST=host.docker.internal | `make up-server` (LLM만 띄움) |
-| **LLM만 있음** | SERVER_LLM_ENDPOINT=http://host.docker.internal:8000/... | `make up-server` (Elastic만 띄움) |
-| **둘 다 있음** | 둘 다 host.docker.internal | `make up-server-app-only` |
+| **Elastic 없음** | ELASTIC_HOST=elasticsearch | `make up-server` (Elastic 띄움) |
+| **Elastic 있음** | ELASTIC_HOST=host.docker.internal | `make up-server-app-only` (app만 띄움) |
+| **vLLM** | SERVER_LLM_BASE_URL=http://172.16.0.52:8000 | (외부 GPU 서버, 별도 운영) |
 
-**기존 서비스 사용 시 .env.server 예시**:
+**중요**: vLLM은 **외부 GPU 서버에서 별도로 운영**됩니다. 이 레포에서는 vLLM 컨테이너를 띄우지 않습니다.
+
+**.env.server 예시**:
 ```bash
-# 호스트에서 Elasticsearch (9200), LLM (8000) 실행 중인 경우
-ELASTIC_HOST=host.docker.internal
+# Elasticsearch는 이 레포에서 띄움 (또는 기존 서비스 사용)
+ELASTIC_HOST=elasticsearch  # 또는 host.docker.internal
 ELASTIC_PORT=9200
-SERVER_LLM_ENDPOINT=http://host.docker.internal:8000/v1/completions
+
+# vLLM은 외부 GPU 서버에서 운영
+SERVER_LLM_BASE_URL=http://172.16.0.52:8000  # GPU 서버 base URL (vLLM)
 ```
 
 ---
 
 ## 📋 사전 요구사항
 
-### 하드웨어
-- **GPU**: NVIDIA GPU (CUDA 지원)
+### 아키텍처 분리
+
+**이 레포 (운영 서버)**:
+- Elasticsearch (검색 엔진)
+- RAG 애플리케이션
+- Streamlit UI
+- 인덱싱/임베딩
+
+**GPU 서버 (별도 운영)**:
+- vLLM (OpenAI-compatible inference API)
+- GPU 리소스 전담
+
+### 하드웨어 (운영 서버)
 - **메모리**: 최소 16GB RAM
 - **디스크**: 최소 50GB 여유 공간
+- **GPU**: 불필요 (vLLM은 외부 GPU 서버 사용)
 
 ### 소프트웨어
-- **OS**: Ubuntu 20.04+ (또는 NVIDIA Docker 지원 OS)
+- **OS**: Ubuntu 20.04+ (또는 Linux)
 - **Docker**: 20.10+
 - **Docker Compose**: 2.0+
-- **NVIDIA Container Toolkit**: GPU 지원용
 
 ---
 
 ## 🔧 1단계: 환경 준비
 
-### 1.1 NVIDIA Container Toolkit 설치
+### 1.1 GPU 서버 확인 (별도 운영)
 
-```bash
-# NVIDIA Docker 런타임 설치
-distribution=$(. /etc/os-release;echo $ID$VERSION_ID)
-curl -s -L https://nvidia.github.io/nvidia-docker/gpgkey | sudo apt-key add -
-curl -s -L https://nvidia.github.io/nvidia-docker/$distribution/nvidia-docker.list | sudo tee /etc/apt/sources.list.d/nvidia-docker.list
+**중요**: vLLM은 **외부 GPU 서버에서 별도로 운영**됩니다.
 
-sudo apt-get update
-sudo apt-get install -y nvidia-container-toolkit
-sudo systemctl restart docker
+GPU 서버에서:
+- vLLM 컨테이너 실행 중
+- OpenAI-compatible API 제공 (`/v1/completions`, `/v1/chat/completions`)
+- 접근 가능한 IP 주소 확인 (예: `172.16.0.52:8000`)
 
-# 설치 확인
-docker run --rm --gpus all nvidia/cuda:11.8.0-base-ubuntu22.04 nvidia-smi
-```
-
-### 1.2 저장소 클론
+### 1.2 저장소 클론 (운영 서버)
 
 ```bash
 # 저장소 클론
@@ -102,20 +109,20 @@ cp .env.server.example .env.server
 vim .env.server
 ```
 
-**기본 설정 (Elastic/LLM 새로 띄우는 경우)**:
+**기본 설정**:
 ```bash
 # .env.server
 MODE=server
 RETRIEVER_MODE=elastic
 
-# Elasticsearch
+# Elasticsearch (이 레포에서 띄움)
 ELASTIC_HOST=elasticsearch
 ELASTIC_PORT=9200
 ELASTIC_INDEX_NAME=ksp_rag_index
 
-# LLM (vLLM GPU 서버)
+# LLM (외부 GPU 서버의 vLLM)
 LLM_PROVIDER=server_http
-SERVER_LLM_ENDPOINT=http://llm:8000/v1/completions
+SERVER_LLM_BASE_URL=http://172.16.0.52:8000  # GPU 서버 base URL (vLLM)
 SERVER_LLM_MODEL=meta-llama/Llama-2-7b-chat-hf
 
 # 검색 설정
@@ -123,11 +130,14 @@ TOP_K=12
 RERANK_TOP_K=5
 ```
 
-**기존 서비스 사용 시** (`make check-server` 결과 참고):
+**기존 Elasticsearch 사용 시** (`make check-server` 결과 참고):
 ```bash
-# 호스트에서 Elasticsearch(9200), LLM(8000) 실행 중이면
+# 호스트에서 Elasticsearch(9200) 실행 중이면
 ELASTIC_HOST=host.docker.internal
-SERVER_LLM_ENDPOINT=http://host.docker.internal:8000/v1/completions
+ELASTIC_PORT=9200
+
+# vLLM은 항상 외부 GPU 서버
+SERVER_LLM_ENDPOINT=http://172.16.0.52:8000/v1/completions
 ```
 
 ### 2.2 로컬 API 키 (선택 사항)
@@ -158,7 +168,7 @@ docker compose build app
 ### 3.2 서버 프로파일 시작
 
 ```bash
-# 서버 모드 전체 시작 (Elasticsearch + LLM + App)
+# 서버 모드 시작 (Elasticsearch + App, vLLM은 외부 GPU 서버 사용)
 make up-server
 
 # 또는
@@ -167,7 +177,11 @@ docker compose --profile server up -d
 
 **실행되는 서비스**:
 - `elasticsearch`: 검색 엔진 (포트 9200)
-- `llm`: vLLM GPU 서버 (포트 8000)
+- `app`: RAG 애플리케이션
+- `ui`: Streamlit UI (선택)
+
+**외부 서비스**:
+- `vLLM`: GPU 서버에서 별도 운영 (예: `172.16.0.52:8000`)
 
 ### 3.3 서비스 상태 확인
 
@@ -177,13 +191,15 @@ docker compose ps
 
 # 로그 확인
 docker compose logs -f elasticsearch
-docker compose logs -f llm
+docker compose logs -f app
 
 # Elasticsearch 헬스체크
 curl 'http://localhost:9200/_cluster/health?pretty'
 
-# vLLM 헬스체크
-curl http://localhost:8000/health
+# 외부 vLLM 헬스체크
+make llm-health
+# 또는
+curl http://172.16.0.52:8000/health
 ```
 
 ---
@@ -269,12 +285,18 @@ Top 3:
 ### 6.2 RAG 질의 테스트
 
 ```bash
-# Elasticsearch + vLLM RAG
+# Elasticsearch + 외부 vLLM RAG
 make ask-elastic Q="What are the main features of the Honduras pension system?"
 
 # 또는
 docker compose --profile server run --rm app \
   python -m ragapp ask "What are the main features of the Honduras pension system?" --mode elastic
+```
+
+**중요**: 외부 vLLM이 정상 작동하는지 먼저 확인:
+```bash
+make llm-health
+make llm-test
 ```
 
 **예상 출력**:
@@ -438,21 +460,29 @@ sudo sysctl -p
 sudo sysctl -w vm.max_map_count=262144
 ```
 
-### 문제 2: vLLM GPU 메모리 부족
+### 문제 2: 외부 vLLM 연결 실패
 
 **증상**:
 ```
-CUDA out of memory
+ConnectionError: [Errno 111] Connection refused
+또는
+Failed to connect to 172.16.0.52:8000
 ```
 
 **해결**:
 ```bash
-# .env.server에서 GPU 메모리 사용량 조정
-GPU_MEMORY_UTILIZATION=0.7  # 기본 0.9에서 감소
+# 1. GPU 서버에서 vLLM 실행 확인
+ssh user@gpu-server
+sudo docker ps | grep vllm
 
-# 또는 더 작은 모델 사용
-SERVER_LLM_MODEL=meta-llama/Llama-2-7b-chat-hf  # 현재
-# SERVER_LLM_MODEL=TinyLlama/TinyLlama-1.1B-Chat-v1.0  # 대안
+# 2. 네트워크 연결 확인
+curl http://172.16.0.52:8000/health
+
+# 3. .env.server의 SERVER_LLM_BASE_URL 확인
+grep SERVER_LLM_BASE_URL .env.server
+
+# 4. 방화벽 확인 (필요시)
+# GPU 서버에서 포트 8000이 열려있는지 확인
 ```
 
 ### 문제 3: Elasticsearch 연결 거부
@@ -477,32 +507,13 @@ docker compose restart elasticsearch
 sleep 30
 ```
 
-### 문제 4: vLLM 모델 다운로드 느림
-
-**증상**:
-모델 다운로드가 너무 오래 걸림 (수 GB)
-
-**해결**:
-```bash
-# 로컬에서 미리 다운로드 후 서버로 복사
-# 1. 로컬에서
-docker compose --profile server run --rm llm \
-  python -c "from transformers import AutoModel; AutoModel.from_pretrained('meta-llama/Llama-2-7b-chat-hf')"
-
-# 2. 캐시 복사
-rsync -avz ~/.cache/huggingface/ user@server:~/.cache/huggingface/
-
-# 3. 서버에서 볼륨 마운트 확인
-docker compose --profile server up -d llm
-```
-
 ---
 
 ## ✅ 체크리스트
 
 ### 배포 전
-- [ ] NVIDIA Container Toolkit 설치 완료
-- [ ] `.env.server` 설정 완료
+- [ ] 외부 GPU 서버의 vLLM 실행 확인
+- [ ] `.env.server` 설정 완료 (SERVER_LLM_BASE_URL)
 - [ ] PDF 파일 준비 (`data/raw/`)
 - [ ] Docker Compose 2.0+ 확인
 
@@ -510,7 +521,7 @@ docker compose --profile server up -d llm
 - [ ] `make build` 성공
 - [ ] `make up-server` 실행
 - [ ] Elasticsearch 헬스체크 통과
-- [ ] vLLM 헬스체크 통과
+- [ ] 외부 vLLM 헬스체크 통과 (`make llm-health`)
 - [ ] `make ingest` 완료
 - [ ] `make index-elastic` 완료
 

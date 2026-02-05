@@ -98,14 +98,13 @@ if [ $LLM_FOUND -eq 0 ]; then
     fi
 fi
 
-# 2-3. ksp-rag 자체 LLM 확인
-if docker ps --format '{{.Names}}' 2>/dev/null | grep -q ksp-rag-llm; then
-    echo -e "  ${CYAN}ℹ${NC} (ksp-rag-llm: 본 프로젝트 컨테이너 - llm 호스트명 사용)"
-    LLM_SOURCE="ksp-rag"
+# 2-3. 외부 vLLM 확인 (GPU 서버에서 별도 운영)
+if [ $LLM_FOUND -eq 1 ]; then
+    echo -e "  ${CYAN}ℹ${NC} (외부 vLLM 서비스 - GPU 서버에서 별도 운영)"
 fi
 
 if [ $LLM_FOUND -eq 0 ]; then
-    echo -e "  ${YELLOW}○${NC} LLM 미발견 (ksp-rag-system에서 새로 띄울 예정)"
+    echo -e "  ${YELLOW}○${NC} LLM 미발견 (외부 GPU 서버의 vLLM endpoint를 .env.server에 설정 필요)"
 fi
 echo ""
 
@@ -137,40 +136,34 @@ else
     LLM_USE_EXTERNAL=$LLM_FOUND
 fi
 
-if [ $ELASTIC_USE_EXTERNAL -eq 1 ] && [ $LLM_USE_EXTERNAL -eq 1 ]; then
-    echo -e "${GREEN}✅ 외부 Elasticsearch + LLM 사용 가능${NC}"
+# LLM은 항상 외부 GPU 서버에서 운영 (이 레포에서는 제거됨)
+if [ $ELASTIC_USE_EXTERNAL -eq 1 ]; then
+    echo -e "${GREEN}✅ 외부 Elasticsearch 사용 가능${NC}"
     echo ""
     echo "다음 .env.server 설정을 사용하세요:"
     echo ""
     echo "  ELASTIC_HOST=host.docker.internal"
     echo "  ELASTIC_PORT=${ELASTIC_PORT}"
-    echo "  SERVER_LLM_ENDPOINT=http://host.docker.internal:${LLM_PORT}/v1/completions"
+    if [ $LLM_FOUND -eq 1 ]; then
+        echo "  SERVER_LLM_BASE_URL=http://host.docker.internal:${LLM_PORT}  # 로컬 vLLM"
+    else
+        echo "  SERVER_LLM_BASE_URL=http://172.16.0.52:8000  # GPU 서버 vLLM"
+    fi
     echo ""
-    echo "  make up-server-app-only  # app, ui만 시작 (elastic, llm 제외)"
-    echo ""
-elif [ $ELASTIC_USE_EXTERNAL -eq 1 ]; then
-    echo -e "${YELLOW}⚠ Elasticsearch만 외부 사용, LLM은 ksp-rag에서 띄움${NC}"
-    echo ""
-    echo "  ELASTIC_HOST=host.docker.internal"
-    echo "  ELASTIC_PORT=${ELASTIC_PORT}"
-    echo "  SERVER_LLM_ENDPOINT=http://llm:8000/v1/completions"
-    echo ""
-    echo "  make up-server  # LLM만 시작 (elastic 제외하려면 docker-compose 수정 필요)"
-    echo ""
-elif [ $LLM_USE_EXTERNAL -eq 1 ]; then
-    echo -e "${YELLOW}⚠ LLM만 외부 사용, Elasticsearch는 ksp-rag에서 띄움${NC}"
-    echo ""
-    echo "  ELASTIC_HOST=elasticsearch  # ksp-rag elastic 사용"
-    echo "  SERVER_LLM_ENDPOINT=http://host.docker.internal:${LLM_PORT}/v1/completions"
+    echo "  make up-server-app-only  # app, ui만 시작"
     echo ""
 else
-    echo -e "${CYAN}ℹ ksp-rag 전용 또는 전체 새로 띄우기 (기본값)${NC}"
+    echo -e "${CYAN}ℹ 기본 설정 (Elasticsearch는 ksp-rag에서 띄움)${NC}"
     echo ""
     echo "  ELASTIC_HOST=elasticsearch"
     echo "  ELASTIC_PORT=9200"
-    echo "  SERVER_LLM_ENDPOINT=http://llm:8000/v1/completions"
+    if [ $LLM_FOUND -eq 1 ]; then
+        echo "  SERVER_LLM_BASE_URL=http://host.docker.internal:${LLM_PORT}  # 로컬 vLLM"
+    else
+        echo "  SERVER_LLM_BASE_URL=http://172.16.0.52:8000  # GPU 서버 vLLM"
+    fi
     echo ""
-    echo "  make up-server  # Elasticsearch + LLM 모두 ksp-rag-system에서 실행"
+    echo "  make up-server  # Elasticsearch + app 시작 (vLLM은 외부 GPU 서버 사용)"
     echo ""
 fi
 

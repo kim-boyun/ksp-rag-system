@@ -1,0 +1,59 @@
+# ================================
+# GPU 서버 전용 Docker Compose
+# ================================
+# 이 파일은 GPU 서버에서 vLLM inference API만 제공하는 용도입니다.
+# 운영 서버(이 레포)에서는 이 파일을 사용하지 않습니다.
+#
+# 사용법:
+#   cd ops/gpu
+#   docker compose up -d
+#
+# 또는 루트에서:
+#   docker compose -f ops/gpu/docker-compose.yml up -d
+
+services:
+  # ================================
+  # vLLM Service (GPU 서버 전용)
+  # ================================
+  llm:
+    image: vllm/vllm-openai:latest
+    container_name: ksp-rag-llm
+    env_file:
+      - .env.gpu  # 선택 사항
+    environment:
+      # vLLM 설정 (환경 변수로 오버라이드 가능)
+      - MODEL_NAME=${SERVER_LLM_MODEL:-meta-llama/Llama-2-7b-chat-hf}
+      - TENSOR_PARALLEL_SIZE=${TENSOR_PARALLEL_SIZE:-1}
+      - GPU_MEMORY_UTILIZATION=${GPU_MEMORY_UTILIZATION:-0.9}
+      - MAX_MODEL_LEN=${MAX_MODEL_LEN:-4096}
+    ports:
+      - "8000:8000"
+    volumes:
+      - llm-cache:/root/.cache/huggingface  # 모델 캐시
+    networks:
+      - rag-network
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8000/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 300s  # 모델 로딩 시간 고려
+    command: >
+      --model ${SERVER_LLM_MODEL:-meta-llama/Llama-2-7b-chat-hf}
+      --host 0.0.0.0
+      --port 8000
+
+networks:
+  rag-network:
+    driver: bridge
+    external: false  # GPU 서버에서 독립적으로 사용 가능
+
+volumes:
+  llm-cache:       # LLM 모델 캐시

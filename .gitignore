@@ -27,6 +27,7 @@ wheels/
 .env
 .env.local
 .env.server
+ops/gpu/.env.gpu
 # 템플릿 파일은 커밋 (*.example)
 
 # 데이터 & 모델

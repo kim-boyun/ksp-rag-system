@@ -15,23 +15,37 @@ class ServerHTTPClient(BaseLLM):
     Server HTTP client for vLLM or other OpenAI-compatible endpoints
     """
     
-    def __init__(self, endpoint: str = None, model: str = None):
+    def __init__(self, endpoint: str = None, model: str = None, base_url: str = None):
         """
         Initialize server HTTP client
         
         Args:
-            endpoint: HTTP endpoint URL (uses config if None)
+            endpoint: Full HTTP endpoint URL (deprecated, use base_url instead)
             model: Model name (uses config if None)
+            base_url: Base URL for vLLM server (e.g., http://172.16.0.52:8000)
         """
         config = get_config()
         
-        self.endpoint = endpoint or config.server_llm_endpoint
+        # 우선순위: endpoint (하위 호환) > base_url > config
+        if endpoint:
+            self.endpoint = endpoint
+            logger.warning("Using 'endpoint' parameter is deprecated. Use 'base_url' instead.")
+        elif base_url:
+            self.endpoint = f"{base_url}/v1/completions"
+        else:
+            # config에서 BASE_URL 사용
+            self.endpoint = config.get_llm_endpoint()
+        
+        self.base_url = base_url or config.server_llm_base_url
+        self.chat_endpoint = config.get_llm_chat_endpoint()
         self.model = model or config.server_llm_model
         self.temperature = config.llm_temperature
         self.max_tokens = config.llm_max_tokens
         
         logger.info(f"ServerHTTPClient initialized")
-        logger.info(f"Endpoint: {self.endpoint}")
+        logger.info(f"Base URL: {self.base_url}")
+        logger.info(f"Completions endpoint: {self.endpoint}")
+        logger.info(f"Chat endpoint: {self.chat_endpoint}")
         logger.info(f"Model: {self.model}")
     
     def generate(
@@ -105,9 +119,8 @@ class ServerHTTPClient(BaseLLM):
         max_tokens = max_tokens or self.max_tokens
         temperature = temperature or self.temperature
         
-        # Convert chat to single prompt (for completion-only endpoints)
-        # Or use chat endpoint if available
-        chat_endpoint = self.endpoint.replace("/completions", "/chat/completions")
+        # Use dedicated chat endpoint
+        chat_endpoint = self.chat_endpoint
         
         payload = {
             "model": self.model,

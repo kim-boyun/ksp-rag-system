@@ -22,14 +22,16 @@ build: ## Docker 이미지 빌드
 rebuild: ## Docker 이미지 재빌드 (캐시 무시)
 	docker compose build --no-cache app
 
-up-local: ## 로컬 모드로 컨테이너 시작
+up-local: ## 로컬 모드로 컨테이너 시작 (.env.local 사용)
+	cp .env.local .env
 	docker compose --profile local up -d
 
-up-server: ## 서버 모드로 컨테이너 시작 (Elasticsearch + LLM)
+up-server: ## 서버 모드로 컨테이너 시작 (Elasticsearch + App, 외부 vLLM 사용, .env.server 사용)
+	cp .env.server .env
 	docker compose --profile server up -d
 
-up-server-app-only: ## app+ui만 시작 (기존 Elastic/LLM 사용 시)
-	@echo "기존 Elasticsearch/LLM 사용 - app, ui만 시작"
+up-server-app-only: ## app+ui만 시작 (기존 Elastic/외부 vLLM 사용 시)
+	@echo "기존 Elasticsearch/외부 vLLM 사용 - app, ui만 시작"
 	cp .env.server .env 2>/dev/null || true
 	docker compose --profile app-only up -d
 	@echo "UI: http://localhost:8501"
@@ -51,13 +53,26 @@ clean-data: ## 처리된 데이터와 인덱스만 삭제
 # CLI 명령어
 # ================================
 
-config-local: ## 로컬 설정 확인
+config-local: ## 로컬 설정 확인 (.env.local 사용)
+	cp .env.local .env
 	docker compose --profile local run --rm app python -m ragapp config
 
-config-server: ## 서버 설정 확인
-	docker compose --profile server run --rm -e MODE=server app python -m ragapp config
+config-server: ## 서버 설정 확인 (.env.server 사용)
+	cp .env.server .env
+	docker compose --profile server run --rm app python -m ragapp config
 
-version: ## 버전 확인
+health-local: ## 헬스체크 (로컬 모드, .env.local 사용)
+	cp .env.local .env
+	docker compose --profile local run --rm app python -m ragapp health
+
+health-server: ## 헬스체크 (서버 모드, .env.server 사용) - Elasticsearch + vLLM 체크
+	cp .env.server .env
+	docker compose --profile server run --rm app python -m ragapp health
+
+health: health-server ## 헬스체크 (기본=서버 모드)
+
+version: ## 버전 확인 (.env.local 사용)
+	cp .env.local .env
 	docker compose --profile local run --rm app python -m ragapp version
 
 # ================================
@@ -74,31 +89,30 @@ ingest-tables: ## 문서 인제스트 (표 포함)
 # 인덱스 빌드
 # ================================
 
-index-local: ## 로컬 인덱스 빌드 (BM25 + FAISS)
+index-local: ## 로컬 인덱스 빌드 (BM25 + FAISS, .env.local 사용)
+	cp .env.local .env
 	docker compose --profile local run --rm app python -m ragapp index
 
-index-small: ## 로컬 인덱스 빌드 (작은 임베딩 모델)
+index-small: ## 로컬 인덱스 빌드 (작은 임베딩 모델, .env.local 사용)
+	cp .env.local .env
 	docker compose --profile local run --rm app python -m ragapp index --embedding-model BAAI/bge-small-en-v1.5
-
-index-elastic: ## Elasticsearch 인덱스 빌드
-	docker compose --profile server run --rm app python -m ragapp index-elastic
-
-index-elastic-recreate: ## Elasticsearch 인덱스 재생성
-	docker compose --profile server run --rm app python -m ragapp index-elastic --recreate
 
 # ================================
 # RAG 파이프라인
 # ================================
 
-ask-local: ## RAG 질의응답 (로컬 모드) - 사용: make ask-local Q="질문"
+ask-local: ## RAG 질의응답 (로컬 모드, .env.local 사용) - 사용: make ask-local Q="질문"
+	cp .env.local .env
 	docker compose --profile local run --rm app python -m ragapp ask "$(Q)"
 
 ask: ask-local ## RAG 질의응답 (기본=로컬)
 
-ask-rerank: ## RAG 질의응답 (리랭크 포함)
+ask-rerank: ## RAG 질의응답 (리랭크 포함, .env.local 사용)
+	cp .env.local .env
 	docker compose --profile local run --rm app python -m ragapp ask "$(Q)" --rerank
 
-ask-elastic: ## RAG 질의응답 (Elasticsearch 모드)
+ask-elastic: ## RAG 질의응답 (Elasticsearch 모드, .env.server 사용)
+	cp .env.server .env
 	docker compose --profile server run --rm app python -m ragapp ask "$(Q)" --mode elastic
 
 ask-server: ask-elastic ## RAG 질의응답 (서버 모드)
@@ -107,7 +121,8 @@ ask-server: ask-elastic ## RAG 질의응답 (서버 모드)
 # 인덱싱 & 검색
 # ================================
 
-index: ## 로컬 인덱스 빌드 (BM25 + FAISS)
+index: ## 로컬 인덱스 빌드 (BM25 + FAISS, .env.local 사용)
+	cp .env.local .env
 	docker compose --profile local run --rm app python -m ragapp index
 
 index-small: ## 작은 모델로 빠르게 인덱스 빌드
@@ -146,27 +161,75 @@ kibana-up: ## Kibana 시작 (Elasticsearch UI)
 	@echo "Kibana: http://localhost:5601"
 
 # ================================
-# LLM 서비스 관리 (GPU 서버)
+# GPU 서버 (별도 compose 파일)
 # ================================
 
-llm-up: ## LLM 서비스 시작 (GPU 필요)
-	docker compose --profile server up -d llm
+gpu-up: ## GPU 서버에서 vLLM 시작 (ops/gpu/docker-compose.yml 사용)
+	@echo "⚠️  이 명령어는 GPU 서버에서만 실행하세요."
+	@echo "📁 GPU 설정: ops/gpu/"
+	docker compose -f ops/gpu/docker-compose.yml up -d
+	@echo "vLLM 서비스 시작됨: http://localhost:8000"
 
-llm-down: ## LLM 서비스 중지
-	docker compose --profile server stop llm
+gpu-down: ## GPU 서버에서 vLLM 중지
+	@echo "⚠️  이 명령어는 GPU 서버에서만 실행하세요."
+	docker compose -f ops/gpu/docker-compose.yml down
 
-llm-health: ## LLM 헬스체크
-	@echo "Checking LLM health..."
-	@curl -s http://localhost:8000/health || echo "❌ LLM not running"
+gpu-logs: ## GPU 서버 vLLM 로그 확인
+	@echo "⚠️  이 명령어는 GPU 서버에서만 실행하세요."
+	docker compose -f ops/gpu/docker-compose.yml logs -f llm
 
-llm-logs: ## LLM 로그 확인
-	docker compose logs -f llm
+gpu-health: ## GPU 서버 vLLM 헬스체크
+	@echo "⚠️  이 명령어는 GPU 서버에서만 실행하세요."
+	@echo "Checking vLLM health..."
+	@curl -s http://localhost:8000/health || echo "❌ vLLM not running"
 
-llm-test: ## LLM 테스트 요청
-	@echo "Testing LLM endpoint..."
-	@curl -X POST http://localhost:8000/v1/completions \
-		-H "Content-Type: application/json" \
-		-d '{"model": "meta-llama/Llama-2-7b-chat-hf", "prompt": "Hello, ", "max_tokens": 20}' | jq
+# ================================
+# 외부 LLM 서비스 확인 (운영 서버에서)
+# ================================
+
+llm-health: ## 외부 LLM 헬스체크 (.env.server의 SERVER_LLM_BASE_URL 사용)
+	@echo "Checking external LLM health..."
+	@if [ -f .env.server ]; then \
+		if grep -q "^SERVER_LLM_BASE_URL=" .env.server; then \
+			BASE_URL=$$(grep "^SERVER_LLM_BASE_URL=" .env.server | cut -d'=' -f2); \
+			curl -s $$BASE_URL/health || echo "❌ External LLM not accessible"; \
+		elif grep -q "^SERVER_LLM_ENDPOINT=" .env.server; then \
+			ENDPOINT=$$(grep "^SERVER_LLM_ENDPOINT=" .env.server | cut -d'=' -f2 | sed 's|/v1/completions||'); \
+			curl -s $$ENDPOINT/health || echo "❌ External LLM not accessible"; \
+		else \
+			echo "⚠️  SERVER_LLM_BASE_URL not found. Using default..."; \
+			curl -s http://172.16.0.52:8000/health || echo "❌ External LLM not accessible"; \
+		fi \
+	else \
+		echo "⚠️  .env.server not found. Using default endpoint..."; \
+		curl -s http://172.16.0.52:8000/health || echo "❌ External LLM not accessible"; \
+	fi
+
+llm-test: ## 외부 LLM 테스트 요청
+	@echo "Testing external LLM endpoint..."
+	@if [ -f .env.server ]; then \
+		if grep -q "^SERVER_LLM_BASE_URL=" .env.server; then \
+			BASE_URL=$$(grep "^SERVER_LLM_BASE_URL=" .env.server | cut -d'=' -f2); \
+			curl -X POST $$BASE_URL/v1/completions \
+				-H "Content-Type: application/json" \
+				-d '{"model": "meta-llama/Llama-2-7b-chat-hf", "prompt": "Hello, ", "max_tokens": 20}' | jq || echo "❌ Request failed"; \
+		elif grep -q "^SERVER_LLM_ENDPOINT=" .env.server; then \
+			ENDPOINT=$$(grep "^SERVER_LLM_ENDPOINT=" .env.server | cut -d'=' -f2); \
+			curl -X POST $$ENDPOINT \
+				-H "Content-Type: application/json" \
+				-d '{"model": "meta-llama/Llama-2-7b-chat-hf", "prompt": "Hello, ", "max_tokens": 20}' | jq || echo "❌ Request failed"; \
+		else \
+			echo "⚠️  SERVER_LLM_BASE_URL not found. Using default..."; \
+			curl -X POST http://172.16.0.52:8000/v1/completions \
+				-H "Content-Type: application/json" \
+				-d '{"model": "meta-llama/Llama-2-7b-chat-hf", "prompt": "Hello, ", "max_tokens": 20}' | jq || echo "❌ Request failed"; \
+		fi \
+	else \
+		echo "⚠️  .env.server not found. Using default endpoint..."; \
+		curl -X POST http://172.16.0.52:8000/v1/completions \
+			-H "Content-Type: application/json" \
+			-d '{"model": "meta-llama/Llama-2-7b-chat-hf", "prompt": "Hello, ", "max_tokens": 20}' | jq || echo "❌ Request failed"; \
+	fi
 
 # ================================
 # Streamlit UI
@@ -196,32 +259,39 @@ ui-logs: ## Streamlit UI 로그
 # Elasticsearch 인덱스
 # ================================
 
-index-elastic: ## Elasticsearch 인덱스 빌드
+index-elastic: ## Elasticsearch 인덱스 빌드 (.env.server 사용)
+	cp .env.server .env
 	docker compose --profile server run --rm app python -m ragapp index-elastic
 
-index-elastic-recreate: ## Elasticsearch 인덱스 재생성
+index-elastic-recreate: ## Elasticsearch 인덱스 재생성 (.env.server 사용)
+	cp .env.server .env
 	docker compose --profile server run --rm app python -m ragapp index-elastic --recreate
 
 # ================================
 # 검색 / RAG
 # ================================
 
-retrieve: ## 하이브리드 검색만 테스트 - 사용: make retrieve Q="질문"
+retrieve: ## 하이브리드 검색만 테스트 (.env.local 사용) - 사용: make retrieve Q="질문"
+	cp .env.local .env
 	docker compose --profile local run --rm app python -m ragapp retrieve "$(Q)"
 
-retrieve-rerank: ## 리랭크 포함 검색만 - 사용: make retrieve-rerank Q="질문"
+retrieve-rerank: ## 리랭크 포함 검색만 (.env.local 사용) - 사용: make retrieve-rerank Q="질문"
+	cp .env.local .env
 	docker compose --profile local run --rm app python -m ragapp retrieve "$(Q)" \
 		--rerank
 
-retrieve-json: ## 검색 결과 JSON 저장 - 사용: make retrieve-json Q="질문"
+retrieve-json: ## 검색 결과 JSON 저장 (.env.local 사용) - 사용: make retrieve-json Q="질문"
+	cp .env.local .env
 	docker compose --profile local run --rm app python -m ragapp retrieve "$(Q)" \
 		--output results_retrieve.json
 
-retrieve-sample: ## 샘플 인덱스로 검색 테스트
+retrieve-sample: ## 샘플 인덱스로 검색 테스트 (.env.local 사용)
+	cp .env.local .env
 	docker compose --profile local run --rm app python -m ragapp retrieve "$(Q)" \
 		--index-dir data/index_sample
 
-retrieve-elastic: ## Elasticsearch 검색 - 사용: make retrieve-elastic Q="질문"
+retrieve-elastic: ## Elasticsearch 검색 (.env.server 사용) - 사용: make retrieve-elastic Q="질문"
+	cp .env.server .env
 	docker compose --profile server run --rm app python -m ragapp retrieve "$(Q)" --mode elastic
 
 retrieve-elastic-rerank: ## Elasticsearch + 리랭크
@@ -254,21 +324,25 @@ shell: ## 앱 컨테이너 bash 접속
 # RAG 파이프라인 (추후 구현)
 # ================================
 
-ingest-local: ## 로컬 모드로 문서 인덱싱
+ingest-local: ## 로컬 모드로 문서 인덱싱 (.env.local 사용)
 	@echo "⏳ 문서 인덱싱 중... (로컬 BM25+FAISS)"
-	docker-compose run --rm -e MODE=local app python -m src.cli ingest
+	cp .env.local .env
+	docker compose --profile local run --rm app python -m ragapp ingest
 
-query-local: ## 로컬 모드 질의
+query-local: ## 로컬 모드 질의 (.env.local 사용)
 	@echo "💬 질의: $(Q)"
-	docker-compose run --rm -e MODE=local app python -m src.cli query "$(Q)"
+	cp .env.local .env
+	docker compose --profile local run --rm app python -m ragapp ask "$(Q)"
 
-ingest-server: ## 서버 모드로 문서 인덱싱
+ingest-server: ## 서버 모드로 문서 인덱싱 (.env.server 사용)
 	@echo "⏳ 문서 인덱싱 중... (Elasticsearch)"
-	docker-compose run --rm -e MODE=server app python -m src.cli ingest
+	cp .env.server .env
+	docker compose --profile server run --rm app python -m ragapp ingest
 
-query-server: ## 서버 모드 질의
+query-server: ## 서버 모드 질의 (.env.server 사용)
 	@echo "💬 질의: $(Q)"
-	docker-compose run --rm -e MODE=server app python -m src.cli query "$(Q)"
+	cp .env.server .env
+	docker compose --profile server run --rm app python -m ragapp ask "$(Q)"
 
 # ================================
 # 테스트

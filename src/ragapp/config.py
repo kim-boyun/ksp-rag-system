@@ -60,14 +60,20 @@ class AppConfig(BaseSettings):
     elastic_port: int = Field(default=9200, gt=0, lt=65536)
     elastic_index_name: str = Field(default="ksp_rag_index", description="Index name")
     
-    # 서버 LLM (vLLM HTTP endpoint)
-    server_llm_endpoint: str = Field(
-        default="http://vllm:8000/v1/completions",
-        description="vLLM HTTP endpoint"
+    # 서버 LLM (외부 vLLM HTTP endpoint)
+    server_llm_base_url: str = Field(
+        default="http://172.16.0.52:8000",
+        description="External vLLM base URL (GPU server, without /v1/completions)"
     )
     server_llm_model: str = Field(
         default="meta-llama/Llama-2-7b-chat-hf",
         description="Server LLM model"
+    )
+    
+    # 하위 호환성: SERVER_LLM_ENDPOINT가 있으면 사용 (deprecated)
+    server_llm_endpoint: str | None = Field(
+        default=None,
+        description="[Deprecated] Full endpoint URL. Use SERVER_LLM_BASE_URL instead."
     )
     
     # ================================
@@ -95,7 +101,21 @@ class AppConfig(BaseSettings):
         """Get LLM endpoint based on mode"""
         if self.is_local_mode:
             return f"openai:{self.llm_model}"
-        return self.server_llm_endpoint
+        # 하위 호환성: server_llm_endpoint가 있으면 사용
+        if self.server_llm_endpoint:
+            return self.server_llm_endpoint
+        # 기본: BASE_URL + /v1/completions
+        return f"{self.server_llm_base_url}/v1/completions"
+    
+    def get_llm_chat_endpoint(self) -> str:
+        """Get LLM chat endpoint"""
+        if self.is_local_mode:
+            return f"openai:{self.llm_model}"
+        # 하위 호환성: server_llm_endpoint가 있으면 변환
+        if self.server_llm_endpoint:
+            return self.server_llm_endpoint.replace("/completions", "/chat/completions")
+        # 기본: BASE_URL + /v1/chat/completions
+        return f"{self.server_llm_base_url}/v1/chat/completions"
     
     def get_retriever_type(self) -> str:
         """Get retriever type based on mode"""

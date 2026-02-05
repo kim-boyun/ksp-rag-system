@@ -13,11 +13,146 @@ Docker 기반 하이브리드 RAG 시스템 (로컬/서버 모드 지원)
 ## 🏗️ 아키텍처
 
 ```
-로컬 모드 (Mac 개발)          서버 모드 (Ubuntu GPU)
-├─ BM25 + FAISS             ├─ Elasticsearch (하이브리드)
-├─ 로컬 임베딩 모델            ├─ GPU 임베딩 모델
-└─ OpenAI API               └─ vLLM HTTP endpoint
+로컬 모드 (Mac 개발)          운영 서버 (이 레포)          GPU 서버 (별도)
+├─ BM25 + FAISS             ├─ Elasticsearch            ├─ vLLM
+├─ 로컬 임베딩 모델            ├─ RAG App                 └─ OpenAI-compatible API
+└─ OpenAI API               ├─ Streamlit UI
+                            └─ 인덱싱/임베딩
 ```
+
+**역할 분리**:
+- **운영 서버 (이 레포)**: Elasticsearch + RAG app + Streamlit + 인덱싱/임베딩
+- **GPU 서버 (별도)**: vLLM inference API만 제공 (`ops/gpu/docker-compose.yml`)
+
+**자세한 아키텍처**: [docs/architecture/overview.md](docs/architecture/overview.md)
+
+---
+
+## 📐 Deployment Topology
+
+### 시스템 구성
+
+KSP RAG System은 **역할 분리 아키텍처**를 채택합니다:
+
+```
+┌─────────────────────────────────┐         ┌─────────────────────────────────┐
+│      운영 서버 (App Server)      │         │      GPU 서버 (별도 서버)        │
+│      (이 레포지토리)              │         │      (ops/gpu/docker-compose.yml) │
+├─────────────────────────────────┤         ├─────────────────────────────────┤
+│                                  │         │                                  │
+│  • Elasticsearch (9200)          │         │  • vLLM API (8000)              │
+│  • RAG App (Python)              │  HTTP   │  • OpenAI-compatible            │
+│  • Streamlit UI (8501)           │  ────>  │  • GPU 추론 전용                │
+│  • 인덱싱/임베딩 (BGE)            │         │                                  │
+│                                  │         │                                  │
+└─────────────────────────────────┘         └─────────────────────────────────┘
+```
+
+### 왜 이렇게 분리하는가?
+
+1. **비용 최적화**: GPU 서버는 추론 시에만 사용 → 유휴 시간 비용 절감, 운영 서버는 CPU 기반으로 충분
+2. **운영 편의성**: 각 서버의 독립적인 스케일링 및 업데이트 가능, GPU 서버 장애 시 운영 서버는 계속 동작
+3. **성능 최적화**: GPU 서버는 추론에만 집중 → 최대 처리량 확보, 운영 서버는 검색/인덱싱에 집중 → 응답 시간 단축
+
+### 운영 서버 배포 절차
+
+**위치**: 이 레포지토리
+
+**필요 사항**:
+- Docker & Docker Compose
+- 최소 4GB RAM (Elasticsearch용)
+- GPU 불필요
+
+**배포 단계**:
+
+```bash
+# 1. 저장소 클론
+git clone <repo-url>
+cd ksp-rag-system
+
+# 2. 환경 변수 설정
+cp .env.server.example .env.server
+vim .env.server  # SERVER_LLM_BASE_URL 설정
+
+# 3. 서비스 시작
+make up-server  # Elasticsearch + App 시작
+
+# 4. 인덱싱
+make index-elastic
+
+# 5. UI 시작 (선택)
+make ui-server  # http://localhost:8501
+```
+
+**포트**:
+- `9200`: Elasticsearch (내부)
+- `8501`: Streamlit UI (외부 접근 가능)
+
+**방화벽 규칙**:
+- 인바운드: 8501 (Streamlit UI)
+- 아웃바운드: GPU 서버 8000 포트 접근 필요
+
+### GPU 서버 배포 절차
+
+**위치**: 별도 서버 (Ubuntu 권장)
+
+**필요 사항**:
+- Docker & Docker Compose
+- NVIDIA GPU (CUDA 지원)
+- NVIDIA Container Toolkit
+- 최소 16GB GPU 메모리 (모델에 따라 다름)
+
+**배포 단계**:
+
+```bash
+# 1. 저장소 클론
+git clone <repo-url>
+cd ksp-rag-system
+
+# 2. GPU 설정 디렉토리로 이동
+cd ops/gpu
+
+# 3. 환경 설정 (선택 사항)
+cp .env.gpu.example .env.gpu
+vim .env.gpu  # 필요시 수정
+
+# 4. GPU 서버에서 vLLM 시작
+docker compose up -d
+
+# 5. 헬스체크
+curl http://localhost:8000/health
+```
+
+**포트**:
+- `8000`: vLLM API (운영 서버에서 접근)
+
+**방화벽 규칙**:
+- 인바운드: 8000 (운영 서버에서만 접근 가능하도록 제한)
+- 아웃바운드: 인터넷 (모델 다운로드)
+
+**환경 변수** (선택 사항):
+```bash
+# ops/gpu/.env.gpu (선택)
+SERVER_LLM_MODEL=meta-llama/Llama-2-7b-chat-hf
+GPU_MEMORY_UTILIZATION=0.9
+```
+
+자세한 설정은 [ops/gpu/README.md](ops/gpu/README.md)를 참고하세요.
+
+### 네트워크 연결
+
+**운영 서버 → GPU 서버**:
+- 운영 서버의 `.env.server`에 `SERVER_LLM_BASE_URL=http://<GPU_SERVER_IP>:8000` 설정
+- 네트워크 연결 확인: `make llm-health`
+
+**동일 네트워크 배치 권장**:
+- 가능하면 운영 서버와 GPU 서버를 동일 네트워크에 배치하여 지연 시간 최소화
+- 또는 VPN/전용 네트워크 사용
+
+### 상세 배포 가이드
+
+**운영 서버**: [docs/SERVER_DEPLOYMENT.md](docs/SERVER_DEPLOYMENT.md)  
+**아키텍처 상세**: [docs/architecture/overview.md](docs/architecture/overview.md)
 
 ## 🚀 빠른 시작 (로컬 개발)
 
@@ -417,35 +552,35 @@ make index-elastic-recreate
 
 ---
 
-## 🤖 GPU 서버 LLM 모드
+## 🤖 외부 GPU 서버 vLLM 연동
 
-### LLM 컨테이너 시작 (GPU 필요)
+### 아키텍처
 
-```bash
-# 전제: Ubuntu GPU 서버 + nvidia-docker2
+- **GPU 서버**: vLLM (OpenAI-compatible) inference API만 제공
+- **이 레포 (운영 서버)**: Elasticsearch + RAG app + Streamlit + 인덱싱/임베딩
 
-# LLM 서비스 시작
-make llm-up
-
-# 헬스체크 (모델 로딩 5-10분 대기)
-make llm-health
-
-# 테스트 요청
-make llm-test
-```
-
-### RAG with Server LLM
+### 외부 vLLM 설정
 
 ```bash
 # .env.server 설정
 LLM_PROVIDER=server_http
-SERVER_LLM_ENDPOINT=http://llm:8000/v1/completions
+SERVER_LLM_BASE_URL=http://172.16.0.52:8000  # GPU 서버 base URL (vLLM)
 
-# 전체 서버 스택 시작
-docker compose --profile server up -d
+# 외부 vLLM 헬스체크
+make llm-health
+
+# 외부 vLLM 테스트
+make llm-test
+```
+
+### RAG with 외부 vLLM
+
+```bash
+# 전체 서버 스택 시작 (Elasticsearch + app)
+make up-server
 
 # RAG 실행
-docker compose --profile server run --rm app python -m ragapp ask "질문"
+make ask-elastic Q="질문"
 ```
 
 **자세한 가이드**: [docs/STAGE9_COMPLETION.md](docs/STAGE9_COMPLETION.md)
@@ -493,30 +628,31 @@ make ui-server
 
 ---
 
-## 🚀 GPU 서버 배포
+## 🚀 배포 가이드
 
-### 빠른 배포 절차
+> **참고**: 배포 전에 위의 [Deployment Topology](#-deployment-topology) 섹션을 먼저 읽어보세요.
 
-**목표**: Mac 로컬에서 Ubuntu GPU 서버로 완전 이식
+### 운영 서버 배포 (이 레포)
+
+**역할**: Elasticsearch + RAG app + Streamlit + 인덱싱/임베딩
 
 ```bash
 # 1. 저장소 클론
 git clone <repository-url>
 cd ksp-rag-system
 
-# 2. 기존 서비스 확인 (Elastic/LLM이 이미 있는지)
+# 2. 기존 서비스 확인 (Elastic이 이미 있는지)
 make check-server
 
-# 3. 환경 설정 (check-server 결과 참고)
+# 3. 환경 설정
 cp .env.server.example .env.server
-# .env.server 편집 - 기존 서비스 있으면 host.docker.internal 사용
+# .env.server 편집 - 외부 vLLM endpoint 설정
 
 # 4. Docker 빌드
 make build
 
-# 5. 서버 서비스 시작
-# 기존 Elastic/LLM 없음 → make up-server
-# 기존 Elastic/LLM 있음 → make up-server-app-only
+# 5. 서비스 시작
+make up-server  # Elasticsearch + app 시작
 
 # 6. 데이터 인제스트
 make ingest
@@ -528,11 +664,42 @@ make index-elastic
 make smoke-test
 
 # 9. UI 시작
-make ui-server  # 또는 make up-server-app-only 이미 했다면 생략
+make ui-server
 
 # 10. 브라우저 접속
 # http://<server-ip>:8501
 ```
+
+### GPU 서버 배포 (별도 서버)
+
+> **중요**: GPU 서버는 운영 서버와 별도로 배포됩니다. 위의 [Deployment Topology](#-deployment-topology) 섹션을 참고하세요.
+
+**역할**: vLLM inference API만 제공
+
+```bash
+# 1. 저장소 클론
+git clone <repository-url>
+cd ksp-rag-system
+
+# 2. GPU 설정 디렉토리로 이동
+cd ops/gpu
+
+# 3. 환경 설정 (선택 사항)
+cp .env.gpu.example .env.gpu
+vim .env.gpu  # 필요시 수정
+
+# 4. GPU 서버에서 vLLM 시작
+docker compose up -d
+
+# 5. 헬스체크
+curl http://localhost:8000/health
+
+# 6. 운영 서버에서 외부 vLLM 연결 확인
+# (운영 서버에서 실행)
+make llm-health
+```
+
+**자세한 가이드**: [ops/gpu/README.md](ops/gpu/README.md)
 
 ### 스모크 테스트
 
@@ -549,30 +716,48 @@ make smoke-test
 
 ### 주요 명령어 요약
 
+#### 운영 서버 (이 레포)
+
 | 명령어 | 설명 |
 |--------|------|
 | `make build` | Docker 이미지 빌드 |
-| `make up-server` | 서버 모드 시작 (Elastic+LLM) |
+| `make up-server` | 서버 모드 시작 (Elasticsearch + app) |
 | `make ingest` | PDF 인제스트 |
-| `make index-local` | 로컬 인덱스 빌드 |
 | `make index-elastic` | Elasticsearch 인덱스 빌드 |
-| `make ask-local Q="질문"` | 로컬 RAG 질의 |
 | `make ask-elastic Q="질문"` | Elasticsearch RAG 질의 |
-| `make ui-local` | 로컬 UI 시작 |
 | `make ui-server` | 서버 UI 시작 |
 | `make smoke-test` | 스모크 테스트 |
+| `make llm-health` | 외부 vLLM 헬스체크 |
+
+#### GPU 서버 (별도)
+
+| 명령어 | 설명 |
+|--------|------|
+| `make gpu-up` | vLLM 서비스 시작 (ops/gpu/docker-compose.yml) |
+| `make gpu-down` | vLLM 서비스 중지 |
+| `make gpu-health` | vLLM 헬스체크 |
+| `make gpu-logs` | vLLM 로그 확인 |
+
+**참고**: GPU 서버 명령어는 `ops/gpu/` 디렉토리에서 직접 실행하는 것을 권장합니다. 자세한 내용은 [ops/gpu/README.md](ops/gpu/README.md)를 참고하세요.
 
 ### 상세 배포 가이드
 
-**완전한 배포 절차**: [docs/SERVER_DEPLOYMENT.md](docs/SERVER_DEPLOYMENT.md)
+**운영 서버 배포**: [docs/SERVER_DEPLOYMENT.md](docs/SERVER_DEPLOYMENT.md)  
+**아키텍처 상세**: [docs/architecture/overview.md](docs/architecture/overview.md)
 
 **포함 내용**:
-- NVIDIA Container Toolkit 설치
 - 환경 설정 상세
 - 서비스 시작 및 헬스체크
 - 인덱스 빌드 및 검증
+- 외부 vLLM 연결
 - 성능 모니터링
 - 트러블슈팅
+
+**GPU 서버 배포**: `ops/gpu/docker-compose.yml` 사용
+- GPU 서버에서 별도로 vLLM만 실행
+- 운영 서버는 외부 endpoint로 연결
+- 자세한 가이드: [ops/gpu/README.md](ops/gpu/README.md)
+- 위의 [Deployment Topology](#-deployment-topology) 섹션 참고
 
 ---
 

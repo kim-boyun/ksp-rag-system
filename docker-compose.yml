@@ -20,7 +20,7 @@ services:
     profiles:
       - local
       - server
-      - app-only  # 기존 Elastic/LLM 사용 시 app만 실행
+      - app-only  # 기존 Elastic/외부 vLLM 사용 시 app만 실행
     extra_hosts:
       - "host.docker.internal:host-gateway"  # 호스트 서비스 접근용 (Linux)
     stdin_open: true
@@ -74,44 +74,6 @@ services:
       retries: 5
 
   # ================================
-  # LLM Service (GPU 서버 전용)
-  # ================================
-  llm:
-    image: vllm/vllm-openai:latest
-    container_name: ksp-rag-llm
-    environment:
-      # vLLM 설정
-      - MODEL_NAME=${SERVER_LLM_MODEL:-meta-llama/Llama-2-7b-chat-hf}
-      - TENSOR_PARALLEL_SIZE=1
-      - GPU_MEMORY_UTILIZATION=0.9
-      - MAX_MODEL_LEN=4096
-    ports:
-      - "8000:8000"
-    volumes:
-      - llm-cache:/root/.cache/huggingface  # 모델 캐시
-    networks:
-      - rag-network
-    profiles:
-      - server
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [gpu]
-    healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:8000/health || exit 1"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
-      start_period: 300s  # 모델 로딩 시간 고려
-    command: >
-      --model ${SERVER_LLM_MODEL:-meta-llama/Llama-2-7b-chat-hf}
-      --host 0.0.0.0
-      --port 8000
-
-  # ================================
   # Streamlit UI (로컬/서버 공통)
   # ================================
   ui:
@@ -133,7 +95,7 @@ services:
       - rag-network
     profiles:
       - ui
-      - app-only  # 기존 Elastic/LLM 사용 시 ui만 실행
+      - app-only  # 기존 Elastic/외부 vLLM 사용 시 ui만 실행
     extra_hosts:
       - "host.docker.internal:host-gateway"  # 호스트 서비스 접근용 (Linux)
     command: streamlit run src/ui/app.py --server.port=8501 --server.address=0.0.0.0
@@ -144,5 +106,4 @@ networks:
 
 volumes:
   elastic-data:
-  llm-cache:       # LLM 모델 캐시
   model-cache:     # 임베딩 모델 캐시

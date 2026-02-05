@@ -502,6 +502,87 @@ def retrieve(
 
 
 @app.command()
+def health():
+    """
+    Check health status of external services (Elasticsearch, vLLM)
+    
+    Example:
+        docker compose --profile local run --rm app python -m ragapp health
+        docker compose --profile server run --rm app python -m ragapp health
+    """
+    import httpx
+    from elasticsearch import Elasticsearch
+    
+    config = get_config()
+    all_healthy = True
+    
+    console.print("\n[bold cyan]🏥 Health Check[/bold cyan]\n")
+    
+    # Check Elasticsearch (if server mode or retriever is elastic)
+    if config.is_server_mode or config.retriever_mode == "elastic":
+        try:
+            es = Elasticsearch(
+                [f"http://{config.elastic_host}:{config.elastic_port}"],
+                request_timeout=5
+            )
+            if es.ping():
+                console.print("[bold green]✅ Elasticsearch[/bold green] - Connected")
+                # Get cluster info
+                info = es.info()
+                version = info.get('version', {}).get('number', 'unknown')
+                console.print(f"   Version: {version}")
+            else:
+                console.print("[bold red]❌ Elasticsearch[/bold red] - Ping failed")
+                all_healthy = False
+        except Exception as e:
+            console.print(f"[bold red]❌ Elasticsearch[/bold red] - Connection failed: {e}")
+            all_healthy = False
+    else:
+        console.print("[dim]⏭️  Elasticsearch[/dim] - Skipped (local mode)")
+    
+    # Check vLLM (if server_http provider and SERVER_LLM_BASE_URL is set)
+    if config.llm_provider == "server_http" and config.server_llm_base_url:
+        try:
+            base_url = config.server_llm_base_url.rstrip('/')
+            models_url = f"{base_url}/v1/models"
+            
+            with httpx.Client(timeout=10.0) as client:
+                response = client.get(models_url)
+                response.raise_for_status()
+                
+                data = response.json()
+                if "data" in data and len(data["data"]) > 0:
+                    model_id = data["data"][0].get("id", "unknown")
+                    console.print(f"[bold green]✅ vLLM[/bold green] - Connected")
+                    console.print(f"   Model: {model_id}")
+                    console.print(f"   Endpoint: {base_url}")
+                else:
+                    console.print("[bold yellow]⚠️  vLLM[/bold yellow] - Connected but no models found")
+                    all_healthy = False
+        except httpx.TimeoutException:
+            console.print(f"[bold red]❌ vLLM[/bold red] - Timeout (endpoint: {config.server_llm_base_url})")
+            all_healthy = False
+        except httpx.HTTPStatusError as e:
+            console.print(f"[bold red]❌ vLLM[/bold red] - HTTP {e.response.status_code} (endpoint: {config.server_llm_base_url})")
+            all_healthy = False
+        except Exception as e:
+            console.print(f"[bold red]❌ vLLM[/bold red] - Connection failed: {e}")
+            all_healthy = False
+    elif config.llm_provider == "local_api":
+        console.print("[dim]⏭️  vLLM[/dim] - Skipped (using local_api)")
+    else:
+        console.print("[dim]⏭️  vLLM[/dim] - Skipped (SERVER_LLM_BASE_URL not set)")
+    
+    console.print()
+    if all_healthy:
+        console.print("[bold green]✅ All services are healthy[/bold green]")
+        raise typer.Exit(0)
+    else:
+        console.print("[bold red]❌ Some services are unhealthy[/bold red]")
+        raise typer.Exit(1)
+
+
+@app.command()
 def version():
     """
     Display version information
