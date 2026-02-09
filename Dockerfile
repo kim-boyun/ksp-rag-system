@@ -3,7 +3,7 @@
 # ================================
 
 # Stage 1: Builder
-FROM python:3.11-slim as builder
+FROM python:3.11-slim AS builder
 
 WORKDIR /app
 
@@ -44,8 +44,9 @@ COPY --from=builder /usr/local/bin /usr/local/bin
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONPATH=/app/src:$PYTHONPATH
 
-# 기본 설정 파일 복사 (볼륨 마운트로 덮어씌워질 수 있음)
-COPY .env.local .env.server ./
+# 기본 설정 파일 복사 (example 사용 → 맥/윈도우 첫 클론에서도 빌드 성공)
+COPY .env.local.example .env.local
+COPY .env.server.example .env.server
 
 # 헬스체크
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \

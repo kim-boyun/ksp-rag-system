@@ -176,38 +176,44 @@ def ingest(
     output: str = typer.Option("data/processed/chunks.jsonl", help="Output JSONL file"),
     tables: bool = typer.Option(True, help="Extract tables from PDFs"),
     table_format: str = typer.Option("markdown", help="Table format: markdown or html"),
+    table_header_rows: int = typer.Option(1, help="Number of header rows for table structure metadata"),
+    figures: bool = typer.Option(False, help="Extract and describe figures/charts (images in PDF)"),
+    figure_model: str = typer.Option("blip", help="Figure model: blip, openai_vision, or deplot (chart-to-text)"),
     validate: bool = typer.Option(True, help="Validate output file")
 ):
     """
-    Ingest PDF documents and create chunks
-    
-    Example:
-        docker compose --profile local run --rm app python -m ragapp ingest
-        docker compose --profile local run --rm app python -m ragapp ingest --input-dir data/raw
+    Ingest PDF documents and create chunks.
+    Table chunks include structure metadata. Use --figures to add figure/chart descriptions.
     """
     from ragapp.ingest.run_ingest import run_ingestion, validate_chunks_file
-    
+
     console.print(Panel.fit(
         f"[bold cyan]Input:[/bold cyan] {input_dir}\n"
         f"[bold cyan]Output:[/bold cyan] {output}\n"
         f"[bold cyan]Extract Tables:[/bold cyan] {tables}\n"
-        f"[bold cyan]Table Format:[/bold cyan] {table_format}",
+        f"[bold cyan]Table Format:[/bold cyan] {table_format}\n"
+        f"[bold cyan]Table Header Rows:[/bold cyan] {table_header_rows}\n"
+        f"[bold cyan]Extract Figures:[/bold cyan] {figures}\n"
+        f"[bold cyan]Figure Model:[/bold cyan] {figure_model}",
         title="📥 Ingestion Pipeline"
     ))
-    
+
     input_path = Path(input_dir)
     output_path = Path(output)
-    
+
     if not input_path.exists():
         console.print(f"[bold red]Error:[/bold red] Input directory not found: {input_dir}")
         raise typer.Exit(1)
-    
+
     with console.status("[bold green]Processing PDFs..."):
         num_chunks = run_ingestion(
             input_dir=input_path,
             output_file=output_path,
             extract_tables=tables,
-            table_format=table_format
+            table_format=table_format,
+            table_header_rows=table_header_rows,
+            extract_figures=figures,
+            figure_model=figure_model,
         )
     
     console.print(f"\n[bold green]✅ Ingestion complete![/bold green]")

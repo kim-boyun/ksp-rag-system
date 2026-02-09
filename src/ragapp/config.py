@@ -84,7 +84,16 @@ class AppConfig(BaseSettings):
     
     top_k: int = Field(default=5, gt=0, description="Number of documents to retrieve")
     rerank_top_k: int = Field(default=3, gt=0, description="Number of documents after reranking")
-    
+
+    # Cache (query -> response)
+    cache_enabled: bool = Field(default=True, description="Enable response cache for repeated queries")
+    cache_ttl_seconds: int = Field(default=3600, ge=0, description="Cache TTL in seconds (0 = no expiry)")
+    cache_max_size: int = Field(default=1000, gt=0, description="Max cache entries (LRU eviction)")
+
+    # Query expansion (multiple phrasings -> merge with RRF)
+    query_expansion_enabled: bool = Field(default=True, description="Expand query to multiple phrasings before retrieval")
+    query_expansion_num_queries: int = Field(default=3, ge=1, le=5, description="Number of query variants (including original)")
+
     log_level: str = Field(default="INFO", description="Logging level")
     
     @property
@@ -118,8 +127,8 @@ class AppConfig(BaseSettings):
         return f"{self.server_llm_base_url}/v1/chat/completions"
     
     def get_retriever_type(self) -> str:
-        """Get retriever type based on mode"""
-        return "bm25+faiss" if self.is_local_mode else "elasticsearch"
+        """Get retriever type based on retriever_mode"""
+        return "bm25+faiss" if self.retriever_mode == "local" else "elasticsearch"
 
 
 # Global config instance

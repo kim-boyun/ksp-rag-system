@@ -156,6 +156,8 @@ GPU_MEMORY_UTILIZATION=0.9
 
 ## 🚀 빠른 시작 (로컬 개발)
 
+> **Windows 사용자**: Makefile/셸 스크립트는 Windows 기본 셸에서 동작하지 않습니다. **[docs/WINDOWS.md](docs/WINDOWS.md)** 에서 PowerShell용 설정 및 실행 방법을 참고하세요.
+
 ### 0단계: 환경 설정
 
 ```bash
@@ -246,6 +248,11 @@ make ingest
 
 # 표 포함 인제스트
 make ingest-tables
+
+# 그래프/차트(이미지) 설명 포함 (인제스트 시 한 번만 비전 처리, 질의는 텍스트만)
+docker compose --profile local run --rm app python -m ragapp ingest --figures --figure-model blip
+# 또는 OpenAI Vision 사용 시
+docker compose --profile local run --rm app python -m ragapp ingest --figures --figure-model openai_vision
 
 # 커스텀 경로
 docker compose --profile local run --rm app python -m ragapp ingest \
@@ -341,6 +348,12 @@ ksp-rag-system/
 ├── .env.server              # 서버 설정 (git ignore, 직접 생성)
 └── setup.sh                 # 환경 설정 스크립트
 ```
+
+## ⚡ 캐싱 / 쿼리 확장 / 차트(DePlot)
+
+- **캐싱**: 동일 질의 결과를 메모리 캐시에 저장해 반복 질의 시 검색·LLM 호출 없이 즉시 반환. `.env`에서 `CACHE_ENABLED`, `CACHE_TTL_SECONDS`, `CACHE_MAX_SIZE`로 제어.
+- **쿼리 확장**: 질문을 LLM으로 2~3가지 표현으로 늘린 뒤 각각 검색하고, RRF로 병합해 recall 향상. `QUERY_EXPANSION_ENABLED`, `QUERY_EXPANSION_NUM_QUERIES`로 제어.
+- **차트(DePlot)**: 인제스트 시 `--figure-model deplot`으로 차트 이미지를 표/텍스트로 변환(google/deplot). 질의 시에는 텍스트 검색만 사용.
 
 ## 🔧 기술 스택
 

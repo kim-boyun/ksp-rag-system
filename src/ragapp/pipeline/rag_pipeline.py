@@ -7,6 +7,15 @@ from loguru import logger
 
 from ragapp.config import get_config
 from ragapp.pipeline.types import Document, RAGResponse, Retriever, Reranker, LLMClient
+from ragapp.pipeline.cache import (
+    get_cache,
+    get_cached_response,
+    set_cached_response,
+)
+from ragapp.pipeline.query_expansion import (
+    expand_query_with_llm,
+    merge_retrieval_results_rrf,
+)
 
 
 class RAGPipeline:
@@ -48,53 +57,81 @@ class RAGPipeline:
     
     def ask(self, query: str, use_rerank: bool = None) -> RAGResponse:
         """
-        Process a query through the RAG pipeline
-        
-        Args:
-            query: User query
-            use_rerank: Override rerank setting
-            
-        Returns:
-            RAG response with answer and retrieved documents
+        Process a query through the RAG pipeline.
+        Uses cache and optional query expansion when enabled in config.
         """
         logger.info(f"Processing query: {query}")
-        
         if use_rerank is None:
             use_rerank = self.use_rerank
-        
-        # Step 1: Retrieve
-        retrieved_docs = self.retriever.retrieve(query, top_k=self.config.top_k)
-        logger.info(f"Retrieved {len(retrieved_docs)} documents")
-        
+        mode = self.config.mode
+        top_k = self.config.top_k
+
+        # Cache lookup
+        if self.config.cache_enabled:
+            cache = get_cache(
+                max_size=self.config.cache_max_size,
+                ttl_seconds=self.config.cache_ttl_seconds,
+            )
+            cached = get_cached_response(query, mode, top_k, cache)
+            if cached is not None:
+                return cached
+
+        # Step 1: Query expansion (optional) + Retrieve
+        if self.config.query_expansion_enabled and self.config.query_expansion_num_queries > 1:
+            num_extra = self.config.query_expansion_num_queries - 1
+            queries = expand_query_with_llm(query, self.llm, num_extra=num_extra)
+            logger.info(f"Query expansion: {len(queries)} variants")
+            list_of_docs = []
+            for q in queries:
+                docs = self.retriever.retrieve(q, top_k=top_k * 2)
+                list_of_docs.append(docs)
+            retrieved_docs = merge_retrieval_results_rrf(
+                list_of_docs,
+                top_k=top_k,
+                k=60,
+            )
+            logger.info(f"Retrieved {len(retrieved_docs)} documents (after RRF merge)")
+        else:
+            retrieved_docs = self.retriever.retrieve(query, top_k=top_k)
+            logger.info(f"Retrieved {len(retrieved_docs)} documents")
+
         # Step 2: Rerank (if enabled)
         if use_rerank:
             reranked_docs = self.reranker.rerank(
                 query,
                 retrieved_docs,
-                top_k=self.config.rerank_top_k
+                top_k=self.config.rerank_top_k,
             )
             logger.info(f"Reranked to {len(reranked_docs)} documents")
         else:
-            # No reranking: use all retrieved documents
             reranked_docs = retrieved_docs
-            logger.info(f"Using all {len(reranked_docs)} retrieved documents (no rerank)")
-        
+
         # Step 3: Generate
         prompt = self._build_prompt(query, reranked_docs)
         answer = self.llm.generate(prompt, max_tokens=self.config.llm_max_tokens)
         logger.info("Generated answer")
-        
-        return RAGResponse(
+
+        response = RAGResponse(
             answer=answer,
             retrieved_docs=reranked_docs,
             metadata={
-                "mode": self.config.mode,
+                "mode": mode,
                 "retriever": self.config.get_retriever_type(),
                 "llm_provider": self.config.llm_provider,
                 "rerank_enabled": use_rerank,
-                "num_docs": len(reranked_docs)
-            }
+                "num_docs": len(reranked_docs),
+            },
         )
+
+        # Cache store
+        if self.config.cache_enabled:
+            cache = get_cache(
+                max_size=self.config.cache_max_size,
+                ttl_seconds=self.config.cache_ttl_seconds,
+            )
+            set_cached_response(query, mode, top_k, response, cache)
+
+        return response
     
     def _build_prompt(self, query: str, documents: List[Document]) -> str:
         """Build LLM prompt from query and documents"""

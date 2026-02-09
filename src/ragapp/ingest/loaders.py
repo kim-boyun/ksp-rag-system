@@ -96,39 +96,60 @@ class PDFLoader:
             metadata=metadata
         )
     
-    def load_with_tables(self, pdf_path: Path) -> tuple[PDFDocument, List[Dict[str, Any]]]:
+    def load_with_tables(
+        self,
+        pdf_path: Path,
+        table_settings: Dict[str, Any] | None = None,
+    ) -> tuple[PDFDocument, List[Dict[str, Any]]]:
         """
-        Load PDF and extract both text and tables
-        
+        Load PDF and extract both text and tables.
+        Uses find_tables() so that merged cells are represented as None in the grid,
+        preserving structure for downstream processing.
+
         Args:
             pdf_path: Path to PDF file
-            
+            table_settings: Optional pdfplumber table finder settings (e.g. strategy)
+
         Returns:
-            Tuple of (PDFDocument, list of tables)
+            Tuple of (PDFDocument, list of tables).
+            Each table dict: page_num, table_idx, table (2D list, None = merged cell), doc_id
         """
-        # Load text first
         doc = self.load(pdf_path)
-        
-        # Extract tables using pdfplumber
-        tables = []
+        tables: List[Dict[str, Any]] = []
+
         try:
             with pdfplumber.open(pdf_path) as pdf:
                 for page_num, page in enumerate(pdf.pages, start=1):
-                    page_tables = page.extract_tables()
-                    
-                    for table_idx, table in enumerate(page_tables):
-                        if table:
+                    try:
+                        finder = page.find_tables(settings=table_settings)
+                        for table_idx, tbl in enumerate(finder.tables):
+                            # extract() returns List[List[Optional[str]]]; None = merged cell
+                            grid = tbl.extract()
+                            if not grid:
+                                continue
                             tables.append({
                                 "page_num": page_num,
                                 "table_idx": table_idx,
-                                "table": table,
-                                "doc_id": doc.doc_id
+                                "table": grid,
+                                "doc_id": doc.doc_id,
                             })
-            
+                    except Exception as e:
+                        # Fallback: same page with extract_tables() if find_tables fails
+                        logger.debug(f"find_tables failed on page {page_num}: {e}, using extract_tables")
+                        page_tables = page.extract_tables()
+                        for table_idx, table in enumerate(page_tables):
+                            if table:
+                                tables.append({
+                                    "page_num": page_num,
+                                    "table_idx": table_idx,
+                                    "table": table,
+                                    "doc_id": doc.doc_id,
+                                })
+
             logger.info(f"Extracted {len(tables)} tables from {pdf_path.name}")
         except Exception as e:
             logger.warning(f"Failed to extract tables from {pdf_path.name}: {e}")
-        
+
         return doc, tables
     
     def _extract_metadata(self, pdf_reader: pypdf.PdfReader) -> Dict[str, Any]:

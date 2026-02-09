@@ -23,7 +23,7 @@ class Chunk:
     page_start: int
     page_end: int
     content: str
-    content_type: str  # "text" | "table_md" | "table_html"
+    content_type: str  # "text" | "table_md" | "table_html" | "figure"
     metadata: Dict[str, Any]
     
     def to_dict(self) -> dict:

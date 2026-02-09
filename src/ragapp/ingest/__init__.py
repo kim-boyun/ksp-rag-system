@@ -1,6 +1,6 @@
 """
 Document ingestion pipeline
-Handles PDF loading, chunking, and table extraction
+Handles PDF loading, chunking, table and figure extraction
 """
 from ragapp.ingest.loaders import PDFLoader
 from ragapp.ingest.chunkers import TextChunker
