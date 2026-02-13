@@ -15,6 +15,9 @@ from ragapp.retrievers.elastic_retriever import ElasticHybridRetriever
 
 console = Console()
 
+# 한 번에 임베딩 후 ES에 넣는 단위. 이만큼 넣을 때마다 저장되므로 중간에 꺼져도 resume 가능.
+INDEX_BATCH_SIZE = 10_000
+
 
 def build_elastic_index(
     chunks_file: str,
@@ -78,31 +81,53 @@ def build_elastic_index(
         retriever.create_index(embedding_dim=embedding_dim)
     else:
         logger.info(f"Index already exists: {index_name}")
-    
-    # Generate embeddings
-    logger.info("\n🤖 Generating embeddings...")
-    texts = [chunk.get("content", "") for chunk in chunks]
-    
-    console.print(f"Embedding {len(texts)} documents...")
-    embeddings = retriever.embedder.embed_documents(
-        texts,
-        batch_size=batch_size
-    )
-    
-    # Bulk index
-    logger.info("\n📤 Indexing to Elasticsearch...")
-    with console.status("[bold green]Indexing documents..."):
-        retriever.bulk_index(chunks, embeddings)
-    
+
+    # Resume: skip chunks already in the index (when not recreating)
+    indexed_ids = set()
+    if not recreate:
+        logger.info("\n📋 Checking already indexed chunks (resume)...")
+        indexed_ids = retriever.get_indexed_chunk_ids()
+        if indexed_ids:
+            logger.info(f"Found {len(indexed_ids)} chunks already in index; will skip and index only the rest.")
+    chunks_to_index = [c for c in chunks if c.get("chunk_id") not in indexed_ids]
+    skipped = len(chunks) - len(chunks_to_index)
+    if skipped:
+        logger.info(f"Skipping {skipped} already indexed; {len(chunks_to_index)} chunks to index.")
+    if not chunks_to_index:
+        logger.info("Nothing to index (all chunks already present). Done.")
+        console.print(Panel.fit(
+            f"[bold green]✅ Index already up to date![/bold green]\n\n"
+            f"[cyan]Index:[/cyan] {index_name}\n"
+            f"[cyan]Total chunks in index:[/cyan] {len(indexed_ids)}",
+            title="🎉 Elasticsearch Index"
+        ))
+        return
+
+    # 일정 개수마다 임베딩 → ES 저장 반복. 중간에 꺼져도 그때까지 저장분은 유지되고 다음에 resume 됨.
+    total_to_index = len(chunks_to_index)
+    indexed_this_run = 0
+    logger.info("\n🤖 Embedding + indexing in batches of %s (progress saved each batch)...", INDEX_BATCH_SIZE)
+
+    for start in range(0, total_to_index, INDEX_BATCH_SIZE):
+        end = min(start + INDEX_BATCH_SIZE, total_to_index)
+        batch = chunks_to_index[start:end]
+        batch_texts = [chunk.get("content", "") for chunk in batch]
+        embeddings = retriever.embedder.embed_documents(batch_texts, batch_size=batch_size)
+        retriever.bulk_index(batch, embeddings)
+        indexed_this_run += len(batch)
+        logger.info("Indexed %s / %s (%.1f%%)", indexed_this_run, total_to_index, 100.0 * indexed_this_run / total_to_index)
+
+    total_in_index = len(indexed_ids) + indexed_this_run
     logger.info("\n🎉 Elasticsearch index built successfully!")
     logger.info(f"Index: {index_name}")
-    logger.info(f"Total chunks: {len(chunks)}")
-    
+    logger.info(f"Indexed this run: {indexed_this_run} | Total in index: {total_in_index}")
+
     # Print summary
     console.print(Panel.fit(
         f"[bold green]✅ Index built successfully![/bold green]\n\n"
         f"[cyan]Index:[/cyan] {index_name}\n"
-        f"[cyan]Chunks:[/cyan] {len(chunks)}\n"
+        f"[cyan]Indexed this run:[/cyan] {indexed_this_run}\n"
+        f"[cyan]Total in index:[/cyan] {total_in_index}\n"
         f"[cyan]Elasticsearch:[/cyan] {elastic_host}:{elastic_port}",
         title="🎉 Elasticsearch Index"
     ))

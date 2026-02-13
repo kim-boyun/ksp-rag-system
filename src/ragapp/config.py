@@ -95,7 +95,10 @@ class AppConfig(BaseSettings):
     query_expansion_num_queries: int = Field(default=3, ge=1, le=5, description="Number of query variants (including original)")
 
     log_level: str = Field(default="INFO", description="Logging level")
-    
+
+    # Ingest: figure/chart extraction (default False = text+table only, faster)
+    extract_figures: bool = Field(default=False, description="Extract figures/charts during ingest (set true for --figures behavior)")
+
     @property
     def is_local_mode(self) -> bool:
         """Check if running in local mode"""

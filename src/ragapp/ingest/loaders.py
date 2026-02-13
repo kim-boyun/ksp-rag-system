@@ -10,6 +10,11 @@ import pdfplumber
 from loguru import logger
 
 
+def _safe_utf8(s: str) -> str:
+    """Replace surrogates/invalid chars so UTF-8 encode never fails downstream."""
+    return s.encode("utf-8", errors="surrogatepass").decode("utf-8", errors="replace")
+
+
 @dataclass
 class PDFPage:
     """Single page from PDF with metadata"""
@@ -74,11 +79,12 @@ class PDFLoader:
             
             # Extract text from each page
             for page_num, page in enumerate(pdf_reader.pages, start=1):
-                text = page.extract_text() or ""
-                
+                raw = page.extract_text() or ""
+                text = _safe_utf8(raw).strip()
+
                 page_obj = PDFPage(
                     page_num=page_num,
-                    text=text.strip(),
+                    text=text,
                     metadata={
                         "page_num": page_num,
                         "char_count": len(text)
@@ -117,34 +123,50 @@ class PDFLoader:
         doc = self.load(pdf_path)
         tables: List[Dict[str, Any]] = []
 
+        def append_table(pg: int, idx: int, grid: List) -> None:
+            tables.append({
+                "page_num": pg,
+                "table_idx": idx,
+                "table": grid,
+                "doc_id": doc.doc_id,
+            })
+
         try:
             with pdfplumber.open(pdf_path) as pdf:
+                # 문서당 첫 페이지만 find_tables() 시도 → 지원 여부에 따라 경로 결정
+                use_find_tables: bool | None = None
+
                 for page_num, page in enumerate(pdf.pages, start=1):
-                    try:
-                        finder = page.find_tables(settings=table_settings)
+                    if use_find_tables is None:
+                        try:
+                            finder = page.find_tables()
+                            for table_idx, tbl in enumerate(finder.tables):
+                                grid = tbl.extract()
+                                if not grid:
+                                    continue
+                                append_table(page_num, table_idx, grid)
+                            use_find_tables = True
+                        except Exception as e:
+                            logger.debug(
+                                "find_tables not available (%s), using extract_tables for %s",
+                                e,
+                                pdf_path.name,
+                            )
+                            use_find_tables = False
+                            for table_idx, table in enumerate(page.extract_tables() or []):
+                                if table:
+                                    append_table(page_num, table_idx, table)
+                    elif use_find_tables:
+                        finder = page.find_tables()
                         for table_idx, tbl in enumerate(finder.tables):
-                            # extract() returns List[List[Optional[str]]]; None = merged cell
                             grid = tbl.extract()
                             if not grid:
                                 continue
-                            tables.append({
-                                "page_num": page_num,
-                                "table_idx": table_idx,
-                                "table": grid,
-                                "doc_id": doc.doc_id,
-                            })
-                    except Exception as e:
-                        # Fallback: same page with extract_tables() if find_tables fails
-                        logger.debug(f"find_tables failed on page {page_num}: {e}, using extract_tables")
-                        page_tables = page.extract_tables()
-                        for table_idx, table in enumerate(page_tables):
+                            append_table(page_num, table_idx, grid)
+                    else:
+                        for table_idx, table in enumerate(page.extract_tables() or []):
                             if table:
-                                tables.append({
-                                    "page_num": page_num,
-                                    "table_idx": table_idx,
-                                    "table": table,
-                                    "doc_id": doc.doc_id,
-                                })
+                                append_table(page_num, table_idx, table)
 
             logger.info(f"Extracted {len(tables)} tables from {pdf_path.name}")
         except Exception as e:

@@ -65,13 +65,18 @@ def run_ingestion(
     if not pdf_files:
         logger.warning(f"No PDF files found in {input_dir}")
         return 0
-    logger.info(f"Found {len(pdf_files)} PDF files")
+
+    total_files = len(pdf_files)
+    logger.info(f"Found {total_files} PDF files")
 
     all_chunks: List[Chunk] = []
 
-    for pdf_path in pdf_files:
+    for idx, pdf_path in enumerate(pdf_files, start=1):
         try:
-            logger.info(f"Processing: {pdf_path.name}")
+            progress_pct = (idx / total_files) * 100
+            logger.info(
+                f"[{idx}/{total_files}] Processing ({progress_pct:.1f}%): {pdf_path.name}"
+            )
 
             if extract_tables and table_extractor:
                 doc, tables = pdf_loader.load_with_tables(pdf_path)
@@ -99,13 +104,25 @@ def run_ingestion(
             logger.error(f"Failed to process {pdf_path.name}: {e}")
             continue
     
-    # Write to JSONL
+    if not all_chunks:
+        logger.warning("No chunks produced (all PDFs may have failed). Skipping write.")
+        return 0
+
+    # Write to JSONL (sanitize so surrogates / invalid UTF-8 from PDFs don't crash the write)
     output_file.parent.mkdir(parents=True, exist_ok=True)
-    
-    with open(output_file, 'w', encoding='utf-8') as f:
-        for chunk in all_chunks:
-            f.write(chunk.to_jsonl() + "\n")
-    
+
+    def _safe_utf8(s: str) -> str:
+        return s.encode("utf-8", errors="surrogatepass").decode("utf-8", errors="replace")
+
+    try:
+        with open(output_file, "w", encoding="utf-8") as f:
+            for chunk in all_chunks:
+                line = chunk.to_jsonl()
+                f.write(_safe_utf8(line) + "\n")
+    except OSError as e:
+        logger.error(f"Failed to write output file {output_file}: {e}")
+        raise
+
     logger.info(f"✅ Ingestion complete!")
     logger.info(f"Total chunks: {len(all_chunks)}")
     logger.info(f"Output: {output_file}")
@@ -133,7 +150,7 @@ def validate_chunks_file(chunks_file: Path) -> bool:
     valid_content_types = {"text", "table_md", "table_html", "figure"}
     
     try:
-        with open(chunks_file, 'r', encoding='utf-8') as f:
+        with open(chunks_file, "r", encoding="utf-8", errors="replace") as f:
             for line_num, line in enumerate(f, start=1):
                 # Parse JSON
                 try:

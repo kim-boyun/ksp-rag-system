@@ -43,33 +43,32 @@ def extract_figures_from_pdf(pdf_path: Path) -> List[Dict[str, Any]]:
     min_width, min_height = 80, 80  # skip tiny images
 
     try:
-        doc = fitz.open(pdf_path)
-        for page_num in range(len(doc)):
-            page = doc[page_num]
-            xref_list = page.get_images()
-            for image_idx, xref_info in enumerate(xref_list):
-                xref = xref_info[0]
-                try:
-                    base = doc.extract_image(xref)
-                    if not base:
-                        continue
-                    img_bytes = base["image"]
-                    w, h = base.get("width", 0), base.get("height", 0)
-                    if w < min_width or h < min_height:
-                        continue
-                    ext = base.get("ext", "png")
-                    pil_image = PilImage.open(io.BytesIO(img_bytes)).convert("RGB")
-                    figures.append({
-                        "page_num": page_num + 1,
-                        "image_idx": image_idx,
-                        "image": pil_image,
-                        "ext": ext,
-                        "width": w,
-                        "height": h,
-                    })
-                except Exception as e:
-                    logger.debug(f"Skip image xref={xref} on page {page_num+1}: {e}")
-        doc.close()
+        with fitz.open(pdf_path) as doc:
+            for page_num in range(len(doc)):
+                page = doc[page_num]
+                xref_list = page.get_images()
+                for image_idx, xref_info in enumerate(xref_list):
+                    xref = xref_info[0]
+                    try:
+                        base = doc.extract_image(xref)
+                        if not base:
+                            continue
+                        img_bytes = base["image"]
+                        w, h = base.get("width", 0), base.get("height", 0)
+                        if w < min_width or h < min_height:
+                            continue
+                        ext = base.get("ext", "png")
+                        pil_image = PilImage.open(io.BytesIO(img_bytes)).convert("RGB")
+                        figures.append({
+                            "page_num": page_num + 1,
+                            "image_idx": image_idx,
+                            "image": pil_image,
+                            "ext": ext,
+                            "width": w,
+                            "height": h,
+                        })
+                    except Exception as e:
+                        logger.debug(f"Skip image xref={xref} on page {page_num+1}: {e}")
     except Exception as e:
         logger.warning(f"Failed to extract figures from {pdf_path.name}: {e}")
 

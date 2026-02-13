@@ -156,8 +156,7 @@ class TextChunker:
         chunk_idx: int,
         suffix: str = ""
     ) -> str:
-        """Generate unique chunk ID"""
+        """Generate unique chunk ID (encode with replace so surrogates in doc_id don't crash)."""
         base = f"{doc_id}_p{page_num}_c{chunk_idx}{suffix}"
-        # Use hash for consistency
-        hash_obj = hashlib.md5(base.encode())
+        hash_obj = hashlib.md5(base.encode("utf-8", errors="replace"))
         return f"{doc_id}_{hash_obj.hexdigest()[:8]}"

@@ -177,7 +177,7 @@ def ingest(
     tables: bool = typer.Option(True, help="Extract tables from PDFs"),
     table_format: str = typer.Option("markdown", help="Table format: markdown or html"),
     table_header_rows: int = typer.Option(1, help="Number of header rows for table structure metadata"),
-    figures: bool = typer.Option(False, help="Extract and describe figures/charts (images in PDF)"),
+    figures: Optional[bool] = typer.Option(None, "--figures/--no-figures", help="Extract figures/charts. Default: from EXTRACT_FIGURES env (false = text+table only)"),
     figure_model: str = typer.Option("blip", help="Figure model: blip, openai_vision, or deplot (chart-to-text)"),
     validate: bool = typer.Option(True, help="Validate output file")
 ):
@@ -186,6 +186,9 @@ def ingest(
     Table chunks include structure metadata. Use --figures to add figure/chart descriptions.
     """
     from ragapp.ingest.run_ingest import run_ingestion, validate_chunks_file
+
+    if figures is None:
+        figures = get_config().extract_figures
 
     console.print(Panel.fit(
         f"[bold cyan]Input:[/bold cyan] {input_dir}\n"

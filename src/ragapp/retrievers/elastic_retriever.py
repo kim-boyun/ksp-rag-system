@@ -6,7 +6,7 @@ from typing import List
 from pathlib import Path
 from loguru import logger
 from elasticsearch import Elasticsearch
-from elasticsearch.helpers import bulk
+from elasticsearch.helpers import bulk, scan
 
 from ragapp.pipeline.types import Document, Retriever
 from ragapp.embeddings.bge import BGEEmbedding
@@ -140,6 +140,26 @@ class ElasticHybridRetriever(Retriever):
     def index_exists(self) -> bool:
         """Check if index exists"""
         return self.es.indices.exists(index=self.index_name)
+
+    def get_indexed_chunk_ids(self) -> set:
+        """
+        Return set of chunk_id already in the index (for resume).
+        Uses scan with _source=False to only fetch _id.
+        """
+        if not self.index_exists():
+            return set()
+        try:
+            hits = scan(
+                self.es,
+                index=self.index_name,
+                query={"query": {"match_all": {}}},
+                _source=False,
+                size=10000,
+            )
+            return {hit["_id"] for hit in hits}
+        except Exception as e:
+            logger.warning(f"Could not list indexed IDs: {e}")
+            return set()
     
     def create_index(self, embedding_dim: int = 384):
         """
