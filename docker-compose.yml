@@ -8,8 +8,7 @@ services:
       dockerfile: Dockerfile
     container_name: ksp-rag-app
     env_file:
-      - .env.local  # 로컬 모드 기본
-      - .env        # 있으면 사용 (서버: cp .env.server .env)
+      - .env  # Makefile에서 .env.local 또는 .env.server를 .env로 복사
     environment:
       - PYTHONDONTWRITEBYTECODE=1  # Python 캐시 비활성화
     volumes:

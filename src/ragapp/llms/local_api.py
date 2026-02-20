@@ -2,7 +2,7 @@
 Local API client (OpenAI-compatible APIs)
 Uses personal API keys for development
 """
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Iterator
 from openai import OpenAI
 from loguru import logger
 
@@ -35,7 +35,7 @@ class LocalAPIClient(BaseLLM):
         if not self.api_key or self.api_key == "" or "your-" in self.api_key:
             raise ValueError(
                 "OpenAI API key not configured. "
-                "Set LLM_API_KEY in .env.local with your actual API key"
+                "Set LLM_API_KEY in .env (from .env.local) with your actual API key"
             )
         
         # Initialize OpenAI client
@@ -69,7 +69,34 @@ class LocalAPIClient(BaseLLM):
         """
         messages = [{"role": "user", "content": prompt}]
         return self.chat(messages, max_tokens, temperature, **kwargs)
-    
+
+    def generate_stream(
+        self,
+        prompt: str,
+        max_tokens: int = None,
+        temperature: float = None,
+        **kwargs
+    ) -> Iterator[str]:
+        """Generate text from prompt, yielding chunks."""
+        messages = [{"role": "user", "content": prompt}]
+        max_tokens = max_tokens or self.max_tokens
+        temperature = temperature or self.temperature
+        try:
+            stream = self.client.chat.completions.create(
+                model=self.model,
+                messages=messages,
+                max_tokens=max_tokens,
+                temperature=temperature,
+                stream=True,
+                **kwargs
+            )
+            for chunk in stream:
+                if chunk.choices and chunk.choices[0].delta.content:
+                    yield chunk.choices[0].delta.content
+        except Exception as e:
+            logger.error(f"OpenAI stream failed: {e}")
+            raise
+
     def chat(
         self,
         messages: List[Dict[str, str]],

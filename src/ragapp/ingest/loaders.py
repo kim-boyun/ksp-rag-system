@@ -45,6 +45,10 @@ class PDFDocument:
         }
 
 
+# 페이지 범위 단위로 로드할 때 한 번에 넣을 페이지 수 (대용량 PDF 메모리 절약)
+PAGE_RANGE_SIZE = 50
+
+
 class PDFLoader:
     """
     PDF document loader
@@ -53,6 +57,50 @@ class PDFLoader:
     
     def __init__(self):
         pass
+    
+    def get_page_count(self, pdf_path: Path) -> int:
+        """Return total number of pages without loading full document."""
+        with open(pdf_path, "rb") as f:
+            return len(pypdf.PdfReader(f).pages)
+    
+    def load_page_range(
+        self,
+        pdf_path: Path,
+        start_page: int,
+        end_page: int,
+        doc_id: str | None = None,
+        total_pages: int | None = None,
+    ) -> PDFDocument:
+        """
+        Load only the given page range (1-based, end_page exclusive).
+        E.g. start_page=1, end_page=51 loads pages 1..50.
+        Use for memory-efficient streaming of large PDFs.
+        """
+        doc_id = doc_id or pdf_path.stem
+        with open(pdf_path, "rb") as f:
+            pdf_reader = pypdf.PdfReader(f)
+            if total_pages is None:
+                total_pages = len(pdf_reader.pages)
+            metadata = self._extract_metadata(pdf_reader)
+            pages: List[PDFPage] = []
+            for page_num in range(start_page, min(end_page, total_pages + 1)):
+                page = pdf_reader.pages[page_num - 1]
+                raw = page.extract_text() or ""
+                text = _safe_utf8(raw).strip()
+                pages.append(
+                    PDFPage(
+                        page_num=page_num,
+                        text=text,
+                        metadata={"page_num": page_num, "char_count": len(text)},
+                    )
+                )
+        return PDFDocument(
+            doc_id=doc_id,
+            source_path=str(pdf_path),
+            pages=pages,
+            total_pages=total_pages,
+            metadata=metadata,
+        )
     
     def load(self, pdf_path: Path) -> PDFDocument:
         """
@@ -173,6 +221,70 @@ class PDFLoader:
             logger.warning(f"Failed to extract tables from {pdf_path.name}: {e}")
 
         return doc, tables
+    
+    def get_tables_for_page_range(
+        self,
+        pdf_path: Path,
+        start_page: int,
+        end_page: int,
+        doc_id: str,
+    ) -> List[Dict[str, Any]]:
+        """
+        Extract tables only for pages in [start_page, end_page) (1-based, end exclusive).
+        Use for memory-efficient streaming; does not load full document.
+        """
+        tables: List[Dict[str, Any]] = []
+        try:
+            with pdfplumber.open(pdf_path) as pdf:
+                use_find_tables: bool | None = None
+                for page_num in range(start_page, min(end_page, len(pdf.pages) + 1)):
+                    page = pdf.pages[page_num - 1]
+                    if use_find_tables is None:
+                        try:
+                            finder = page.find_tables()
+                            for table_idx, tbl in enumerate(finder.tables):
+                                grid = tbl.extract()
+                                if grid:
+                                    tables.append({
+                                        "page_num": page_num,
+                                        "table_idx": table_idx,
+                                        "table": grid,
+                                        "doc_id": doc_id,
+                                    })
+                            use_find_tables = True
+                        except Exception:
+                            use_find_tables = False
+                            for table_idx, table in enumerate(page.extract_tables() or []):
+                                if table:
+                                    tables.append({
+                                        "page_num": page_num,
+                                        "table_idx": table_idx,
+                                        "table": table,
+                                        "doc_id": doc_id,
+                                    })
+                    elif use_find_tables:
+                        finder = page.find_tables()
+                        for table_idx, tbl in enumerate(finder.tables):
+                            grid = tbl.extract()
+                            if grid:
+                                tables.append({
+                                    "page_num": page_num,
+                                    "table_idx": table_idx,
+                                    "table": grid,
+                                    "doc_id": doc_id,
+                                })
+                    else:
+                        for table_idx, table in enumerate(page.extract_tables() or []):
+                            if table:
+                                tables.append({
+                                    "page_num": page_num,
+                                    "table_idx": table_idx,
+                                    "table": table,
+                                    "doc_id": doc_id,
+                                })
+        except Exception as e:
+            logger.warning(f"Failed to extract tables for pages {start_page}-{end_page} from {pdf_path.name}: {e}")
+        return tables
     
     def _extract_metadata(self, pdf_reader: pypdf.PdfReader) -> Dict[str, Any]:
         """Extract PDF metadata"""

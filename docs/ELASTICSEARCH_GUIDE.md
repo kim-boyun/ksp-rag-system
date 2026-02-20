@@ -52,6 +52,47 @@ RETRIEVER_MODE=elastic make retrieve Q="온두라스 연금"
 
 ---
 
+## 🔑 Elasticsearch 검색 + 개인 LLM
+
+검색만 Elasticsearch를 쓰고, LLM은 서버(vLLM)가 아니라 **본인 API 키(OpenAI 등)** 로 쓰고 싶을 때 사용합니다.
+
+### 1. 설정 파일 만들기
+
+```bash
+cp .env.local.example .env.local
+```
+
+`.env.local` 을 열어서 다음만 수정합니다.
+
+- **`LLM_API_KEY`**: OpenAI API 키 (또는 사용하는 서비스 키)
+- **`LLM_MODEL`**: 모델명 (예: `gpt-3.5-turbo`, `gpt-4`)
+- 필요하면 `LLM_API_TYPE` (예: `openai`)
+
+Ollama 등 다른 API를 쓰면 해당 서비스에 맞게 `LLM_API_TYPE`, `LLM_API_KEY`, 엔드포인트 설정을 맞춥니다.
+
+### 2. Elasticsearch 띄우기 + 인덱스 빌드
+
+```bash
+make elastic-up
+make elastic-health   # 필요 시 30초 후 재시도
+make index-elastic    # chunks.jsonl 기준으로 인덱스 생성 (기본값은 .env.server의 Elastic 설정 사용)
+```
+
+### 3. 질의/UI 실행
+
+```bash
+# CLI
+make ask-local Q="궁금한 질문"
+
+# Streamlit UI
+make ui-local
+# 브라우저: http://localhost:8501
+```
+
+정리: **검색 = Elasticsearch**, **LLM = .env.local 에 설정한 개인 LLM** 이 조합으로 동작합니다.
+
+---
+
 ## 📊 Elasticsearch 관리
 
 ### 서비스 관리

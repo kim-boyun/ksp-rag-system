@@ -7,7 +7,7 @@ from typing import List
 import json
 from loguru import logger
 
-from ragapp.ingest.loaders import PDFLoader
+from ragapp.ingest.loaders import PDFLoader, PAGE_RANGE_SIZE
 from ragapp.ingest.chunkers import TextChunker, Chunk
 from ragapp.ingest.tables import TableExtractor
 from ragapp.ingest.figures import (
@@ -69,65 +69,83 @@ def run_ingestion(
     total_files = len(pdf_files)
     logger.info(f"Found {total_files} PDF files")
 
-    all_chunks: List[Chunk] = []
-
-    for idx, pdf_path in enumerate(pdf_files, start=1):
-        try:
-            progress_pct = (idx / total_files) * 100
-            logger.info(
-                f"[{idx}/{total_files}] Processing ({progress_pct:.1f}%): {pdf_path.name}"
-            )
-
-            if extract_tables and table_extractor:
-                doc, tables = pdf_loader.load_with_tables(pdf_path)
-                table_chunks = table_extractor.tables_to_chunks(
-                    tables, doc.doc_id, doc.source_path
-                )
-                all_chunks.extend(table_chunks)
-            else:
-                doc = pdf_loader.load(pdf_path)
-
-            if extract_figures and figure_processor:
-                figures = extract_figures_from_pdf(pdf_path)
-                if figures:
-                    figure_chunks = figures_to_chunks(
-                        figures, figure_processor, doc.doc_id, doc.source_path
-                    )
-                    all_chunks.extend(figure_chunks)
-                    logger.info(f"Created {len(figure_chunks)} figure chunks from {pdf_path.name}")
-
-            text_chunks = text_chunker.chunk_document(doc)
-            all_chunks.extend(text_chunks)
-            logger.info(f"Created {len(text_chunks)} text chunks from {pdf_path.name}")
-
-        except Exception as e:
-            logger.error(f"Failed to process {pdf_path.name}: {e}")
-            continue
-    
-    if not all_chunks:
-        logger.warning("No chunks produced (all PDFs may have failed). Skipping write.")
-        return 0
-
-    # Write to JSONL (sanitize so surrogates / invalid UTF-8 from PDFs don't crash the write)
     output_file.parent.mkdir(parents=True, exist_ok=True)
 
     def _safe_utf8(s: str) -> str:
         return s.encode("utf-8", errors="surrogatepass").decode("utf-8", errors="replace")
 
+    # Stream: per-PDF and within each PDF by page range (bounded memory for 1000+ PDFs and 300+ page PDFs)
+    total_chunks = 0
     try:
         with open(output_file, "w", encoding="utf-8") as f:
-            for chunk in all_chunks:
-                line = chunk.to_jsonl()
-                f.write(_safe_utf8(line) + "\n")
+            for idx, pdf_path in enumerate(pdf_files, start=1):
+                try:
+                    progress_pct = (idx / total_files) * 100
+                    logger.info(
+                        f"[{idx}/{total_files}] Processing ({progress_pct:.1f}%): {pdf_path.name}"
+                    )
+                    doc_id = pdf_path.stem
+                    source_path = str(pdf_path)
+                    total_pages = pdf_loader.get_page_count(pdf_path)
+
+                    # Process one page range at a time so we never hold the full PDF in memory
+                    for start in range(1, total_pages + 1, PAGE_RANGE_SIZE):
+                        end = min(start + PAGE_RANGE_SIZE, total_pages + 1)
+                        range_chunks: List[Chunk] = []
+
+                        doc = pdf_loader.load_page_range(
+                            pdf_path, start, end, doc_id=doc_id, total_pages=total_pages
+                        )
+                        if extract_tables and table_extractor:
+                            tables = pdf_loader.get_tables_for_page_range(
+                                pdf_path, start, end, doc_id
+                            )
+                            if tables:
+                                range_chunks.extend(
+                                    table_extractor.tables_to_chunks(
+                                        tables, doc_id, source_path
+                                    )
+                                )
+                        text_chunks = text_chunker.chunk_document(doc)
+                        range_chunks.extend(text_chunks)
+
+                        for chunk in range_chunks:
+                            f.write(_safe_utf8(chunk.to_jsonl()) + "\n")
+                        total_chunks += len(range_chunks)
+
+                    # Figures: only for small PDFs to avoid loading full doc again; skip in streaming
+                    if extract_figures and figure_processor and total_pages <= PAGE_RANGE_SIZE:
+                        doc_full = pdf_loader.load(pdf_path)
+                        figures = extract_figures_from_pdf(pdf_path)
+                        if figures:
+                            figure_chunks = figures_to_chunks(
+                                figures, figure_processor, doc_full.doc_id, doc_full.source_path
+                            )
+                            for chunk in figure_chunks:
+                                f.write(_safe_utf8(chunk.to_jsonl()) + "\n")
+                            total_chunks += len(figure_chunks)
+                            logger.info(f"Created {len(figure_chunks)} figure chunks from {pdf_path.name}")
+                    elif extract_figures and total_pages > PAGE_RANGE_SIZE:
+                        logger.debug(f"Skipping figures for large PDF {pdf_path.name} (streaming mode)")
+
+                    logger.info(f"Created chunks from {pdf_path.name} (total so far: {total_chunks})")
+
+                except Exception as e:
+                    logger.error(f"Failed to process {pdf_path.name}: {e}")
+                    continue
     except OSError as e:
         logger.error(f"Failed to write output file {output_file}: {e}")
         raise
 
+    if total_chunks == 0:
+        logger.warning("No chunks produced (all PDFs may have failed). Skipping write.")
+        return 0
+
     logger.info(f"✅ Ingestion complete!")
-    logger.info(f"Total chunks: {len(all_chunks)}")
+    logger.info(f"Total chunks: {total_chunks}")
     logger.info(f"Output: {output_file}")
-    
-    return len(all_chunks)
+
+    return total_chunks
 
 
 def validate_chunks_file(chunks_file: Path) -> bool:

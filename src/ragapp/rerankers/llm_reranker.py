@@ -32,7 +32,7 @@ class LLMReranker(BaseReranker):
         self.model = model or config.llm_model
         
         if not self.api_key or self.api_key == "":
-            raise ValueError("LLM API key not configured. Set LLM_API_KEY in .env.local")
+            raise ValueError("LLM API key not configured. Set LLM_API_KEY in .env or .env.local")
         
         self.client = OpenAI(api_key=self.api_key)
         

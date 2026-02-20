@@ -10,10 +10,10 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class AppConfig(BaseSettings):
     """
     Application configuration
-    Loads from .env.local or .env.server based on MODE
+    Loads from .env (copy from .env.local or .env.server before run)
     """
     model_config = SettingsConfigDict(
-        env_file=".env.local",
+        env_file=".env",
         env_file_encoding="utf-8",
         extra="ignore"
     )
@@ -50,7 +50,7 @@ class AppConfig(BaseSettings):
     llm_api_key: str = Field(default="", description="LLM API key")
     llm_model: str = Field(default="gpt-3.5-turbo", description="LLM model name")
     llm_temperature: float = Field(default=0.7, ge=0.0, le=2.0)
-    llm_max_tokens: int = Field(default=1000, gt=0)
+    llm_max_tokens: int = Field(default=2048, gt=0, description="Max tokens for answer (increase if answers get cut off)")
     
     # ================================
     # 서버 모드 설정

@@ -1,7 +1,7 @@
 """
 RAG Pipeline orchestration
 """
-from typing import List
+from typing import List, Generator, Dict, Any, Tuple
 from pathlib import Path
 from loguru import logger
 
@@ -109,6 +109,8 @@ class RAGPipeline:
         # Step 3: Generate
         prompt = self._build_prompt(query, reranked_docs)
         answer = self.llm.generate(prompt, max_tokens=self.config.llm_max_tokens)
+        from ragapp.prompts import clean_rag_answer
+        answer = clean_rag_answer(answer)
         logger.info("Generated answer")
 
         response = RAGResponse(
@@ -132,7 +134,76 @@ class RAGPipeline:
             set_cached_response(query, mode, top_k, response, cache)
 
         return response
-    
+
+    def ask_stream(
+        self, query: str, use_rerank: bool = None
+    ) -> Tuple[Generator[str, None, None], Dict[str, Any]]:
+        """
+        Same as ask() but yields answer text chunk by chunk.
+        Returns (chunk_generator, result_holder). After consuming the generator,
+        result_holder["response"] will be the RAGResponse (with cleaned answer).
+        Cache is skipped for streaming.
+        """
+        if use_rerank is None:
+            use_rerank = self.use_rerank
+        mode = self.config.mode
+        top_k = self.config.top_k
+        result_holder: Dict[str, Any] = {}
+
+        # Step 1: Retrieve (no cache for stream)
+        if self.config.query_expansion_enabled and self.config.query_expansion_num_queries > 1:
+            num_extra = self.config.query_expansion_num_queries - 1
+            queries = expand_query_with_llm(query, self.llm, num_extra=num_extra)
+            list_of_docs = []
+            for q in queries:
+                docs = self.retriever.retrieve(q, top_k=top_k * 2)
+                list_of_docs.append(docs)
+            retrieved_docs = merge_retrieval_results_rrf(
+                list_of_docs, top_k=top_k, k=60
+            )
+        else:
+            retrieved_docs = self.retriever.retrieve(query, top_k=top_k)
+
+        # Step 2: Rerank
+        if use_rerank:
+            reranked_docs = self.reranker.rerank(
+                query, retrieved_docs, top_k=self.config.rerank_top_k
+            )
+        else:
+            reranked_docs = retrieved_docs
+
+        prompt = self._build_prompt(query, reranked_docs)
+        from ragapp.prompts import clean_rag_answer
+
+        def gen() -> Generator[str, None, None]:
+            full: List[str] = []
+            if hasattr(self.llm, "generate_stream"):
+                for chunk in self.llm.generate_stream(
+                    prompt, max_tokens=self.config.llm_max_tokens
+                ):
+                    full.append(chunk)
+                    yield chunk
+            else:
+                text = self.llm.generate(
+                    prompt, max_tokens=self.config.llm_max_tokens
+                )
+                full.append(text)
+                yield text
+            answer = clean_rag_answer("".join(full))
+            result_holder["response"] = RAGResponse(
+                answer=answer,
+                retrieved_docs=reranked_docs,
+                metadata={
+                    "mode": mode,
+                    "retriever": self.config.get_retriever_type(),
+                    "llm_provider": self.config.llm_provider,
+                    "rerank_enabled": use_rerank,
+                    "num_docs": len(reranked_docs),
+                },
+            )
+
+        return gen(), result_holder
+
     def _build_prompt(self, query: str, documents: List[Document]) -> str:
         """Build LLM prompt from query and documents"""
         from ragapp.prompts import format_qa_prompt

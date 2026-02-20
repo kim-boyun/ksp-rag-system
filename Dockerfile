@@ -45,7 +45,7 @@ ENV PYTHONUNBUFFERED=1
 ENV PYTHONPATH=/app/src:$PYTHONPATH
 
 # 기본 설정 파일 복사 (example 사용 → 맥/윈도우 첫 클론에서도 빌드 성공)
-COPY .env.local.example .env.local
+COPY .env.local.example .env
 COPY .env.server.example .env.server
 
 # 헬스체크

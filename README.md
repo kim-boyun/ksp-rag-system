@@ -194,20 +194,21 @@ make ingest
 
 **출력**: `data/processed/chunks.jsonl` (1800+ chunks)
 
-### 3단계: 로컬 인덱스 빌드
+### 3단계: Elasticsearch 인덱스 빌드
 
 ```bash
-# 작은 모델로 빠르게 빌드
-make index-small
+# Elasticsearch 실행 후 인덱스 빌드
+make up-local   # Elasticsearch + 앱 컨테이너 시작
+make index-local
 ```
 
-**출력**: `data/index/` (BM25 + FAISS)
+**출력**: Elasticsearch 인덱스 `ksp_rag_index`
 
 ### 4단계: RAG 질의 테스트
 
 ```bash
-# CLI로 질문
-make ask-local Q="What is the main topic?"
+# CLI로 질문 (Elasticsearch + 개인 LLM)
+make ask Q="What is the main topic?"
 ```
 
 **예상 출력**:
@@ -250,17 +251,17 @@ make ingest
 make ingest-tables
 
 # 그래프/차트(이미지) 설명 포함 (인제스트 시 한 번만 비전 처리, 질의는 텍스트만)
-docker compose --profile local run --rm app python -m ragapp ingest --figures --figure-model blip
+docker compose --profile server run --rm app python -m ragapp ingest --figures --figure-model blip
 # 또는 OpenAI Vision 사용 시
-docker compose --profile local run --rm app python -m ragapp ingest --figures --figure-model openai_vision
+docker compose --profile server run --rm app python -m ragapp ingest --figures --figure-model openai_vision
 
 # 커스텀 경로
-docker compose --profile local run --rm app python -m ragapp ingest \
+docker compose --profile server run --rm app python -m ragapp ingest \
   --input data/raw \
   --output data/processed/chunks.jsonl
 
 # 도움말
-docker compose --profile local run --rm app python -m ragapp ingest --help
+docker compose --profile server run --rm app python -m ragapp ingest --help
 ```
 
 #### RAG 질의
@@ -282,7 +283,7 @@ make config-server
 make version
 
 # 도움말
-docker compose --profile local run --rm app python -m ragapp --help
+docker compose --profile server run --rm app python -m ragapp --help
 ```
 
 ### 개발 & 테스트
@@ -302,7 +303,7 @@ make shell
 
 ```bash
 # 로컬 모드 (placeholder 동작)
-docker compose --profile local run --rm app python -m ragapp ask "hello"
+docker compose --profile server run --rm app python -m ragapp ask "hello"
 
 # 서버 모드 (Elasticsearch + vLLM)
 docker compose --profile server up -d
@@ -342,10 +343,10 @@ ksp-rag-system/
 ├── Dockerfile               # Multi-stage 빌드
 ├── pyproject.toml           # Poetry 의존성
 ├── Makefile                 # 명령어 단축키
-├── .env.local.example       # 로컬 모드 설정 템플릿
-├── .env.server.example      # 서버 모드 설정 템플릿
-├── .env.local               # 로컬 설정 (git ignore, 직접 생성)
-├── .env.server              # 서버 설정 (git ignore, 직접 생성)
+├── .env.local.example  # 로컬(Elastic+LLM) 설정 템플릿
+├── .env.server.example        # 서버 모드 설정 템플릿
+├── .env.local         # 로컬 설정 (git ignore, 직접 생성)
+├── .env.server                # 서버 설정 (git ignore, 직접 생성)
 └── setup.sh                 # 환경 설정 스크립트
 ```
 

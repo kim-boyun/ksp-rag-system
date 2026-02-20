@@ -2,11 +2,33 @@
 Elasticsearch-based hybrid retriever
 Supports BM25 + dense vector search with RRF
 """
+import hashlib
 from typing import List
 from pathlib import Path
 from loguru import logger
 from elasticsearch import Elasticsearch
 from elasticsearch.helpers import bulk, scan
+
+# Elasticsearch _id must be <= 512 bytes; use hash when chunk_id is longer
+MAX_ES_ID_BYTES = 512
+
+
+def _doc_id(chunk_id: str) -> str:
+    """Return ES-safe document id (<= 512 bytes). Uses SHA256 hex when chunk_id is too long."""
+    raw = chunk_id.encode("utf-8")
+    if len(raw) <= MAX_ES_ID_BYTES:
+        return chunk_id
+    return hashlib.sha256(raw).hexdigest()
+
+
+def _doc_id_from_chunk_id(chunk_id: str) -> str:
+    """Derive document name from chunk_id for display (e.g. KSP_Report_p12_c0 -> KSP_Report)."""
+    if not chunk_id:
+        return "Unknown"
+    for sep in ("_p", "_table", "_figure"):
+        if sep in chunk_id:
+            return chunk_id.split(sep)[0]
+    return chunk_id
 
 from ragapp.pipeline.types import Document, Retriever
 from ragapp.embeddings.bge import BGEEmbedding
@@ -120,17 +142,31 @@ class ElasticHybridRetriever(Retriever):
                 body=search_body
             )
             
-            # Convert to Document objects
+            # Convert to Document objects (doc_id/source_path 보강 → UI에서 원본명 표시)
             documents = []
             for hit in response['hits']['hits']:
+                meta = dict(hit['_source'].get('metadata') or {})
+                chunk_id = (hit['_source'] or {}).get('chunk_id') or ""
+                if chunk_id:
+                    meta['chunk_id'] = chunk_id
+                if (not meta.get('doc_id') or meta.get('doc_id') == 'Unknown') and chunk_id:
+                    meta['doc_id'] = _doc_id_from_chunk_id(chunk_id)
+                if not meta.get('source_path') and meta.get('doc_id'):
+                    meta['source_path'] = meta['doc_id']
                 doc = Document(
                     content=hit['_source']['content'],
-                    metadata=hit['_source'].get('metadata', {}),
+                    metadata=meta,
                     score=hit['_score']
                 )
                 documents.append(doc)
             
-            logger.info(f"✅ Retrieved {len(documents)} documents from Elasticsearch")
+            if len(documents) == 0:
+                logger.warning(
+                    "Elasticsearch returned 0 documents. "
+                    "Check that the index has data (run: make index-elastic)"
+                )
+            else:
+                logger.info(f"✅ Retrieved {len(documents)} documents from Elasticsearch")
             return documents
             
         except Exception as e:
@@ -144,7 +180,7 @@ class ElasticHybridRetriever(Retriever):
     def get_indexed_chunk_ids(self) -> set:
         """
         Return set of chunk_id already in the index (for resume).
-        Uses scan with _source=False to only fetch _id.
+        Reads chunk_id from _source so resume works even when _id is a hash.
         """
         if not self.index_exists():
             return set()
@@ -153,10 +189,15 @@ class ElasticHybridRetriever(Retriever):
                 self.es,
                 index=self.index_name,
                 query={"query": {"match_all": {}}},
-                _source=False,
+                _source=["chunk_id"],
                 size=10000,
             )
-            return {hit["_id"] for hit in hits}
+            out = set()
+            for hit in hits:
+                sid = (hit.get("_source") or {}).get("chunk_id")
+                if sid is not None:
+                    out.add(sid)
+            return out
         except Exception as e:
             logger.warning(f"Could not list indexed IDs: {e}")
             return set()
@@ -227,17 +268,24 @@ class ElasticHybridRetriever(Retriever):
         if len(chunks) != len(embeddings):
             raise ValueError("Number of chunks and embeddings must match")
         
-        # Prepare bulk actions
+        # Prepare bulk actions (_id must be <= 512 bytes; use hash if chunk_id is longer)
+        # metadata에 doc_id, source_path 포함 → UI에서 원본 파일명 표시용
         actions = []
         for chunk, embedding in zip(chunks, embeddings):
+            cid = chunk.get("chunk_id") or ""
+            meta = dict(chunk.get("metadata") or {})
+            meta["doc_id"] = chunk.get("doc_id", "Unknown")
+            meta["source_path"] = chunk.get("source_path", "")
+            if "page_num" not in meta:
+                meta["page_num"] = chunk.get("page_start")
             action = {
                 "_index": self.index_name,
-                "_id": chunk.get("chunk_id"),
+                "_id": _doc_id(cid),
                 "_source": {
                     "content": chunk.get("content", ""),
                     "embedding": embedding.tolist(),
-                    "metadata": chunk.get("metadata", {}),
-                    "chunk_id": chunk.get("chunk_id", "")
+                    "metadata": meta,
+                    "chunk_id": cid,
                 }
             }
             actions.append(action)

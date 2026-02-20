@@ -2,7 +2,8 @@
 Server HTTP client for GPU server LLMs
 Supports vLLM, TGI, and other OpenAI-compatible HTTP endpoints
 """
-from typing import List, Dict, Any
+import json
+from typing import List, Dict, Any, Iterator
 import httpx
 from loguru import logger
 
@@ -97,7 +98,46 @@ class ServerHTTPClient(BaseLLM):
         except Exception as e:
             logger.error(f"Server HTTP call failed: {e}")
             raise
-    
+
+    def generate_stream(
+        self,
+        prompt: str,
+        max_tokens: int = None,
+        temperature: float = None,
+        **kwargs
+    ) -> Iterator[str]:
+        """Generate text from prompt, yielding chunks (SSE)."""
+        max_tokens = max_tokens or self.max_tokens
+        temperature = temperature or self.temperature
+        payload = {
+            "model": self.model,
+            "prompt": prompt,
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+            "stream": True,
+            **kwargs
+        }
+        try:
+            with httpx.Client(timeout=120.0) as client:
+                with client.stream("POST", self.endpoint, json=payload) as resp:
+                    resp.raise_for_status()
+                    for line in resp.iter_lines():
+                        if not line or line.strip() != line or not line.startswith("data: "):
+                            continue
+                        if line.strip() == "data: [DONE]":
+                            break
+                        try:
+                            data = json.loads(line[6:])
+                            if "choices" in data and len(data["choices"]) > 0:
+                                delta = data["choices"][0].get("text", "")
+                                if delta:
+                                    yield delta
+                        except json.JSONDecodeError:
+                            continue
+        except Exception as e:
+            logger.error(f"Server HTTP stream failed: {e}")
+            raise
+
     def chat(
         self,
         messages: List[Dict[str, str]],
