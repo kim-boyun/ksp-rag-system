@@ -138,6 +138,11 @@ docker compose --profile local run --rm app python -m ragapp index --embedding-m
 
 출력: `data\index\` (FAISS + BM25 등)
 
+> 💡 **bge-m3로 고품질 인덱스 빌드하기**  
+> - 정확도/다국어 성능을 더 올리고 싶다면:  
+>   `docker compose --profile local run --rm app python -m ragapp index --embedding-model BAAI/bge-m3`  
+> - 단, 이렇게 만든 인덱스를 사용할 때도 **검색 시 임베딩 모델이 BAAI/bge-m3로 동일해야** 합니다.
+
 ### 2.7 RAG 질의
 
 ```powershell

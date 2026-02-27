@@ -86,6 +86,14 @@ make index
 - 기본 임베딩 모델: **BAAI/bge-m3**
 - 결과: `data/index/` 에 FAISS + BM25 인덱스 생성
 
+메모리가 부족하거나 빠른 테스트가 필요하면:
+
+```bash
+make index-small   # BAAI/bge-small-en-v1.5 사용 (384차원)
+```
+
+- bge-small 인덱스는 가볍고 빠르지만, 최종 운영/정확도 관점에서는 **bge-m3 인덱스 사용을 권장**합니다.
+
 다른 경로의 청크 파일을 쓰려면:
 
 ```bash

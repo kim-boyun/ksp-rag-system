@@ -77,6 +77,11 @@ Copy-Item .env.local .env
 docker compose --profile local run --rm app python -m ragapp index --embedding-model BAAI/bge-small-en-v1.5
 ```
 
+> 💡 **bge-m3 사용 옵션 (고품질)**  
+> - 정확도/다국어 지원을 더 중요하게 볼 경우:  
+>   `docker compose --profile local run --rm app python -m ragapp index --embedding-model BAAI/bge-m3`  
+> - 이 경우에도, 해당 인덱스를 쓸 때는 **검색 임베딩 모델도 BAAI/bge-m3로 맞춰야** 합니다.
+
 ### 3.3 RAG 질의 (CLI)
 
 ```powershell
@@ -136,7 +141,8 @@ docker compose --profile ui up -d
 | 환경 설정 | `make setup` | `.\setup.ps1` |
 | 빌드 | `make build` | `docker compose build app` |
 | 인제스트 | `make ingest` | `Copy-Item .env.local .env; docker compose --profile local run --rm app python -m ragapp ingest` |
-| 로컬 인덱스 | `make index-small` | `Copy-Item .env.local .env; docker compose --profile local run --rm app python -m ragapp index --embedding-model BAAI/bge-small-en-v1.5` |
+| 로컬 인덱스 (bge-small, 빠름) | `make index-small` | `Copy-Item .env.local .env; docker compose --profile local run --rm app python -m ragapp index --embedding-model BAAI/bge-small-en-v1.5` |
+| 로컬 인덱스 (bge-m3, 고품질) | `make index` | `Copy-Item .env.local .env; docker compose --profile local run --rm app python -m ragapp index --embedding-model BAAI/bge-m3` |
 | 로컬 질의 | `make ask-local Q="질문"` | `Copy-Item .env.local .env; docker compose --profile local run --rm app python -m ragapp ask "질문"` |
 | UI (로컬) | `make ui-local` | `Copy-Item .env.local .env; docker compose --profile ui up -d` |
 | 서버 시작 | `make up-server` | `Copy-Item .env.server .env; docker compose --profile server up -d` |
