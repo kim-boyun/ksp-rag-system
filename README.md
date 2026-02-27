@@ -133,7 +133,7 @@ curl http://localhost:8000/health
 **환경 변수** (선택 사항):
 ```bash
 # ops/gpu/.env.gpu (선택)
-SERVER_LLM_MODEL=meta-llama/Llama-2-7b-chat-hf
+SERVER_LLM_MODEL=openai/gpt-oss-120b
 GPU_MEMORY_UTILIZATION=0.9
 ```
 

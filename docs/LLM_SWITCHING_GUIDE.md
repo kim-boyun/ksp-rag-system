@@ -40,7 +40,7 @@ make ui-local
 ```bash
 LLM_PROVIDER=server_http  # 외부 vLLM 사용
 SERVER_LLM_BASE_URL=http://172.16.0.52:8000  # GPU 서버 주소
-SERVER_LLM_MODEL=meta-llama/Llama-2-7b-chat-hf
+SERVER_LLM_MODEL=openai/gpt-oss-120b
 ```
 
 **사용 명령어**:

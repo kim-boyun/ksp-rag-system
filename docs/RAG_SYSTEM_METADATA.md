@@ -210,7 +210,7 @@
 | 항목 | 값 |
 |------|-----|
 | 엔드포인트 | `SERVER_LLM_BASE_URL` + `/v1/completions` (또는 chat) |
-| 모델 | `SERVER_LLM_MODEL` (예: meta-llama/Llama-2-7b-chat-hf) |
+| 모델 | `SERVER_LLM_MODEL` (예: openai/gpt-oss-120b) |
 | 용도 | vLLM 등 OpenAI 호환 HTTP 서버 |
 
 ---
@@ -279,7 +279,7 @@
 | ELASTIC_PORT | 9200 | ES 포트 |
 | ELASTIC_INDEX_NAME | ksp_rag_index | 인덱스 이름 |
 | SERVER_LLM_BASE_URL | http://172.16.0.52:8000 | 서버 LLM URL |
-| SERVER_LLM_MODEL | meta-llama/Llama-2-7b-chat-hf | 서버 LLM 모델 |
+| SERVER_LLM_MODEL | openai/gpt-oss-120b | 서버 LLM 모델 |
 | local_embedding_model | paraphrase-multilingual-MiniLM-L12-v2 | config 기본 (Elastic 파이프라인에서도 사용) |
 | EXTRACT_FIGURES | false | figure 추출 여부 |
 | QUERY_EXPANSION_ENABLED | true | 쿼리 확장 사용 여부 |

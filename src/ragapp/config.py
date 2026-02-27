@@ -69,7 +69,7 @@ class AppConfig(BaseSettings):
         description="External vLLM base URL (GPU server, without /v1/completions)"
     )
     server_llm_model: str = Field(
-        default="meta-llama/Llama-2-7b-chat-hf",
+        default="openai/gpt-oss-120b",
         description="Server LLM model"
     )
     
