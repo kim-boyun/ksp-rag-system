@@ -16,7 +16,11 @@ from ragapp.retrievers.elastic_retriever import ElasticHybridRetriever
 console = Console()
 
 # 한 번에 읽어서 임베딩 후 ES에 넣는 단위. 메모리에 이 개수만 유지.
-INDEX_BATCH_SIZE = 10_000
+DEFAULT_INDEX_BATCH_SIZE = 10_000
+# BGE-M3 등 대형 모델은 메모리 절약을 위해 작은 배치 권장
+INDEX_BATCH_SIZE_M3 = 3_000
+# 이 길이 미만 content는 인덱싱 스킵 (노이즈 감소)
+MIN_CONTENT_LENGTH_FOR_INDEX = 10
 
 
 def build_elastic_index(
@@ -24,8 +28,9 @@ def build_elastic_index(
     elastic_host: str = "localhost",
     elastic_port: int = 9200,
     index_name: str = "ksp_rag_index",
-    embedding_model: str = "BAAI/bge-small-en-v1.5",
+    embedding_model: str = "BAAI/bge-m3",
     batch_size: int = 32,
+    index_batch_size: int = None,
     recreate: bool = False
 ):
     """
@@ -38,8 +43,11 @@ def build_elastic_index(
         index_name: Index name
         embedding_model: Embedding model
         batch_size: Batch size for embedding
+        index_batch_size: Chunks per streaming batch (default: smaller for bge-m3 to reduce memory)
         recreate: Whether to recreate index if exists
     """
+    if index_batch_size is None:
+        index_batch_size = INDEX_BATCH_SIZE_M3 if "bge-m3" in embedding_model.lower() else DEFAULT_INDEX_BATCH_SIZE
     logger.info("=" * 60)
     logger.info("Building Elasticsearch Hybrid Index (streaming)")
     logger.info("=" * 60)
@@ -82,7 +90,7 @@ def build_elastic_index(
             logger.info(f"Found {len(indexed_ids)} chunks already in index; will skip and index only the rest.")
 
     # Stream file: read batch -> filter by indexed_ids -> embed -> bulk_index -> discard
-    logger.info("\n🤖 Streaming chunks (batch size=%s, progress saved each batch)...", INDEX_BATCH_SIZE)
+    logger.info("\n🤖 Streaming chunks (batch size=%s, progress saved each batch)...", index_batch_size)
     indexed_this_run = 0
     batch: List[Dict[str, Any]] = []
 
@@ -100,25 +108,33 @@ def build_elastic_index(
             if cid is not None and cid in indexed_ids:
                 continue
             batch.append(chunk)
-            if len(batch) >= INDEX_BATCH_SIZE:
-                batch_texts = [c.get("content", "") for c in batch]
-                embeddings = retriever.embedder.embed_documents(batch_texts, batch_size=batch_size)
-                retriever.bulk_index(batch, embeddings)
-                for c in batch:
-                    if c.get("chunk_id") is not None:
-                        indexed_ids.add(c["chunk_id"])
-                indexed_this_run += len(batch)
+            if len(batch) >= index_batch_size:
+                valid = [c for c in batch if len((c.get("content") or "").strip()) >= MIN_CONTENT_LENGTH_FOR_INDEX]
+                if valid:
+                    batch_texts = [c.get("content", "") for c in valid]
+                    embeddings = retriever.embedder.embed_documents(batch_texts, batch_size=batch_size)
+                    retriever.bulk_index(valid, embeddings)
+                    for c in valid:
+                        if c.get("chunk_id") is not None:
+                            indexed_ids.add(c["chunk_id"])
+                    indexed_this_run += len(valid)
+                if len(valid) < len(batch):
+                    logger.debug("Skipped %s short chunks in batch", len(batch) - len(valid))
                 logger.info("Indexed %s chunks so far (batch done)", indexed_this_run)
                 batch = []
 
         if batch:
-            batch_texts = [c.get("content", "") for c in batch]
-            embeddings = retriever.embedder.embed_documents(batch_texts, batch_size=batch_size)
-            retriever.bulk_index(batch, embeddings)
-            for c in batch:
-                if c.get("chunk_id") is not None:
-                    indexed_ids.add(c["chunk_id"])
-            indexed_this_run += len(batch)
+            valid = [c for c in batch if len((c.get("content") or "").strip()) >= MIN_CONTENT_LENGTH_FOR_INDEX]
+            if valid:
+                batch_texts = [c.get("content", "") for c in valid]
+                embeddings = retriever.embedder.embed_documents(batch_texts, batch_size=batch_size)
+                retriever.bulk_index(valid, embeddings)
+                for c in valid:
+                    if c.get("chunk_id") is not None:
+                        indexed_ids.add(c["chunk_id"])
+                indexed_this_run += len(valid)
+            if len(valid) < len(batch):
+                logger.debug("Skipped %s short chunks in final batch", len(batch) - len(valid))
             logger.info("Indexed %s chunks (final batch)", indexed_this_run)
 
     total_in_index = len(indexed_ids)

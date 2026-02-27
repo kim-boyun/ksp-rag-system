@@ -59,6 +59,9 @@ class AppConfig(BaseSettings):
     elastic_host: str = Field(default="elasticsearch", description="Elasticsearch host")
     elastic_port: int = Field(default=9200, gt=0, lt=65536)
     elastic_index_name: str = Field(default="ksp_rag_index", description="Index name")
+    elastic_bm25_boost: float = Field(default=1.0, ge=0.0, description="BM25 clause boost (튜닝용)")
+    elastic_dense_boost: float = Field(default=1.0, ge=0.0, description="Dense vector clause boost (튜닝용)")
+    retrieval_min_score: float = Field(default=0.0, ge=0.0, le=1.0, description="검색 결과 최소 점수(0=비활성). 결과를 max로 정규화한 뒤 이 값 미만 문서 제외")
     
     # 서버 LLM (외부 vLLM HTTP endpoint)
     server_llm_base_url: str = Field(
@@ -80,7 +83,7 @@ class AppConfig(BaseSettings):
     # 공통 설정
     # ================================
     chunk_size: int = Field(default=512, gt=0, description="Text chunk size")
-    chunk_overlap: int = Field(default=50, ge=0, description="Chunk overlap")
+    chunk_overlap: int = Field(default=80, ge=0, description="Chunk overlap (문장 경계 보존용 권장 80~100)")
     
     top_k: int = Field(default=5, gt=0, description="Number of documents to retrieve")
     rerank_top_k: int = Field(default=3, gt=0, description="Number of documents after reranking")

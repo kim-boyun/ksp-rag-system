@@ -64,3 +64,5 @@ Thumbs.db
 .streamlit/
 /src/ui/.streamlit/
 .cursor/
+
+ksp-indexer.tar.gz

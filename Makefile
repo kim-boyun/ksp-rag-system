@@ -176,8 +176,8 @@ elastic-import: ## data/elastic-data-backup.tar.gz 로 Elasticsearch 데이터 �
 	docker compose --profile server up -d elasticsearch
 	@echo "Done. Wait for ES to be healthy: make elastic-health"
 
-kibana-up: ## Kibana 시작 (Elasticsearch UI)
-	docker compose --profile server up -d kibana
+kibana-up: ## Kibana 시작 (Elasticsearch 디버깅 UI, 선택 사항)
+	docker compose --profile server --profile kibana up -d kibana
 	@echo "Kibana: http://localhost:5601"
 
 # ================================
@@ -289,9 +289,28 @@ index-elastic: ## Elasticsearch 인덱스 빌드 (.env.server 사용)
 	cp .env.server .env
 	docker compose --profile server run --rm app python -m ragapp index-elastic
 
-index-elastic-recreate: ## Elasticsearch 인덱스 재생성 (.env.server 사용)
+index-elastic-recreate: ## Elasticsearch 인덱스 재생성 (.env.server 사용, 기본 BGE-M3)
 	cp .env.server .env
 	docker compose --profile server run --rm app python -m ragapp index-elastic --recreate
+
+index-elastic-small: ## Elasticsearch 인덱스 빌드 (bge-small, 빠름)
+	cp .env.server .env
+	docker compose --profile server run --rm app python -m ragapp index-elastic --model BAAI/bge-small-en-v1.5
+
+index-elastic-recreate-small: ## Elasticsearch 인덱스 재생성 (bge-small, 빠름)
+	cp .env.server .env
+	docker compose --profile server run --rm app python -m ragapp index-elastic --recreate --model BAAI/bge-small-en-v1.5
+
+index-elastic-m3-native: ## [M4/GPU 네이티브] bge-m3로 ksp_rag_index_m3 인덱스 생성 (MPS/CUDA 자동 감지, Docker 없이 실행)
+	@echo "⚠️  네이티브 실행: Docker 아님 (MPS/CUDA 자동 감지)"
+	@echo "   Elasticsearch는 별도로 실행 중이어야 합니다 (docker compose --profile server up elasticsearch -d)"
+	@echo "   인덱스명: ksp_rag_index_m3 (기존 small 인덱스와 분리)"
+	ELASTIC_HOST=localhost ELASTIC_INDEX_NAME=ksp_rag_index_m3 \
+		poetry run python -m ragapp index-elastic \
+		--recreate \
+		--model BAAI/bge-m3 \
+		--index-name ksp_rag_index_m3 \
+		--host localhost
 
 # ================================
 # 검색 / RAG

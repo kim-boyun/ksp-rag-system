@@ -1,13 +1,25 @@
 """
-Streamlit UI for KSP RAG System
+KSP Knowledge Hub — Chatbot UI
 """
-import streamlit as st
 import sys
+import time
 from pathlib import Path
+from datetime import datetime
 
+import streamlit as st
+
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from ragapp.pipeline.rag_pipeline import RAGPipeline
+from ragapp.config import get_config
+from ragapp.prompts import extract_citations
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Helpers (인용·문서 렌더러는 유지 — 추후 재활성화 가능)
+# ─────────────────────────────────────────────────────────────────────────────
 
 def _display_name(metadata: dict) -> str:
-    """원본 파일명 우선 → doc_id → chunk_id에서 추출 → Unknown"""
     meta = metadata or {}
     path = meta.get("source_path") or ""
     if path:
@@ -23,87 +35,238 @@ def _display_name(metadata: dict) -> str:
         return chunk_id
     return "Unknown"
 
-# Add parent directory to path
-sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from ragapp.pipeline.rag_pipeline import RAGPipeline
-from ragapp.config import get_config
-from ragapp.prompts import extract_citations
+def _short_name(name: str, max_len: int = 48) -> str:
+    stem = Path(name).stem
+    suffix = Path(name).suffix
+    if len(name) <= max_len:
+        return name
+    return stem[: max_len - len(suffix) - 1] + "…" + suffix
 
 
+def _relevance_label(score: float) -> tuple[str, str]:
+    pct = min(score, 1.0)
+    if pct >= 0.75:
+        return "높음", "#059669"
+    if pct >= 0.45:
+        return "보통", "#D97706"
+    return "낮음", "#94A3B8"
+
+
+def _content_type_icon(ct: str) -> str:
+    icons = {"table": "📊", "figure": "🖼️", "text": "📝"}
+    return icons.get((ct or "text").lower(), "📝")
+
+
+# ── 인용 출처 렌더러 (추후 재활성화 가능) ─────────────────────────────────────
+def _render_citations(citations: list, docs: list):
+    pass  # reserved
+
+
+# ── 참고 문서 렌더러 (답변 하단 expander) ─────────────────────────────────────
+def _normalize_scores_to_01(docs: list) -> list:
+    """이번 결과 내 최소·최대로 점수를 0~1로 표준화."""
+    if not docs:
+        return []
+    min_s = min(d.score for d in docs)
+    max_s = max(d.score for d in docs)
+    if max_s <= min_s:
+        return [1.0] * len(docs)
+    return [(d.score - min_s) / (max_s - min_s) for d in docs]
+
+
+def _render_source_docs(docs: list, citations: list):
+    if not docs:
+        return
+    cited_nums = {c.get("doc_num") for c in (citations or [])}
+    norm_scores = _normalize_scores_to_01(docs)
+    with st.expander(f"📄 참고 문서 ({len(docs)}건)", expanded=False):
+        st.caption(
+            "점수는 이번 결과 안에서 0~1로 표준화했습니다. 1에 가까울수록 상대적으로 관련도가 높습니다."
+        )
+        for i, doc in enumerate(docs, 1):
+            name = _short_name(_display_name(doc.metadata))
+            page = doc.metadata.get("page_num", "N/A")
+            ct = doc.metadata.get("content_type", "text")
+            ct_icon = _content_type_icon(ct)
+            norm_score = norm_scores[i - 1] if i <= len(norm_scores) else 0.0
+            rel_label, rel_color = _relevance_label(norm_score)
+            cited_marker = " 🔗" if i in cited_nums else ""
+            preview = doc.content[:200].strip().replace("\n", " ")
+            if len(doc.content) > 200:
+                preview += "…"
+            st.markdown(
+                f"**{i}. {name}{cited_marker}** &nbsp; {ct_icon} {ct} · 페이지 {page} &nbsp; "
+                f"<span style='font-size:0.75rem;color:{rel_color};background:{rel_color}22;padding:2px 6px;border-radius:4px;'>{rel_label} {norm_score:.2f}</span>  \n"
+                f"<span style='font-size:0.82rem;color:#64748B;'>{preview}</span>",
+                unsafe_allow_html=True,
+            )
+            if i < len(docs):
+                st.markdown(
+                    "<hr style='border:none;border-top:1px solid #E2E8F0;margin:8px 0;'>",
+                    unsafe_allow_html=True,
+                )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Page config
+# ─────────────────────────────────────────────────────────────────────────────
+
 st.set_page_config(
-    page_title="KSP RAG System",
-    page_icon="🔍",
-    layout="wide",
-    initial_sidebar_state="expanded"
+    page_title="KSP Knowledge Hub",
+    page_icon="📘",
+    layout="centered",
+    initial_sidebar_state="expanded",
 )
 
-# Custom CSS (라이트/다크 모드 모두 가독성 확보)
+# ─────────────────────────────────────────────────────────────────────────────
+# CSS
+# ─────────────────────────────────────────────────────────────────────────────
+
 st.markdown("""
 <style>
-    .main-header {
-        font-size: 2.5rem;
-        font-weight: bold;
-        color: #1f77b4;
-        margin-bottom: 1rem;
-    }
-    .answer-box {
-        background-color: #f0f8ff;
-        color: #1a1a1a;
-        padding: 1.5rem;
-        border-radius: 0.5rem;
-        border-left: 5px solid #1f77b4;
-        margin: 1rem 0;
-    }
-    .citation-box {
-        background-color: #fff9e6;
-        color: #1a1a1a;
-        padding: 1rem;
-        border-radius: 0.5rem;
-        border-left: 3px solid #ffa500;
-        margin: 0.5rem 0;
-        font-size: 0.9rem;
-    }
-    .doc-preview {
-        background-color: #f5f5f5;
-        color: #333;
-        padding: 0.8rem;
-        border-radius: 0.3rem;
-        font-size: 0.85rem;
-        margin: 0.3rem 0;
-    }
-    /* 다크 모드 */
-    [data-theme="dark"] .answer-box {
-        background-color: #1e3a5f;
-        color: #e8f4fc;
-        border-left-color: #60a5fa;
-    }
-    [data-theme="dark"] .citation-box {
-        background-color: #422006;
-        color: #fef3c7;
-        border-left-color: #f59e0b;
-    }
-    [data-theme="dark"] .doc-preview {
-        background-color: #334155;
-        color: #e2e8f0;
-    }
+/* ── 전역 ── */
+.block-container {
+    padding-top: 3.5rem !important;
+    padding-bottom: 3rem !important;
+    max-width: 780px !important;
+}
+
+/* ── 헤더 타이틀 ── */
+.chat-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 6px;
+}
+.chat-logo {
+    width: 40px;
+    height: 40px;
+    background: linear-gradient(135deg, #2563EB 0%, #0EA5E9 100%);
+    border-radius: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 20px;
+    flex-shrink: 0;
+    box-shadow: 0 3px 10px rgba(37,99,235,0.25);
+}
+.chat-title {
+    font-size: 1.35rem;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    margin: 0;
+    color: #0F172A;
+}
+.chat-subtitle {
+    font-size: 0.8rem;
+    color: #64748B;
+    margin: 0;
+}
+
+/* ── 다크 모드 ── */
+[data-theme="dark"] .chat-title {
+    color: #F8FAFC !important;
+}
+[data-theme="dark"] .chat-subtitle {
+    color: #CBD5E1 !important;
+}
+[data-theme="dark"] [data-testid="stSidebar"] {
+    background: #1E293B !important;
+    border-right: 1px solid #334155 !important;
+}
+[data-theme="dark"] [data-testid="stSidebar"] p,
+[data-theme="dark"] [data-testid="stSidebar"] span,
+[data-theme="dark"] [data-testid="stSidebar"] label,
+[data-theme="dark"] [data-testid="stSidebar"] .stMarkdown {
+    color: #E2E8F0 !important;
+}
+[data-theme="dark"] [data-testid="stSidebar"] small,
+[data-theme="dark"] [data-testid="stSidebar"] .stCaptionContainer {
+    color: #94A3B8 !important;
+}
+[data-theme="dark"] [data-testid="stSidebar"] .stButton > button {
+    background: #2563EB !important;
+    color: #FFFFFF !important;
+    border: 1px solid #3B82F6 !important;
+}
+[data-theme="dark"] [data-testid="stSidebar"] .stButton > button:hover {
+    background: #1D4ED8 !important;
+}
+
+/* ── 사이드바 라이트 모드 버튼 ── */
+[data-testid="stSidebar"] .stButton > button {
+    background: #2563EB;
+    color: #FFFFFF;
+    border: 1px solid #1D4ED8;
+    font-weight: 500;
+}
+[data-testid="stSidebar"] .stButton > button:hover {
+    background: #1D4ED8;
+    color: #FFFFFF;
+}
+
+/* ── 채팅 말풍선 ── */
+[data-testid="stChatMessage"] {
+    border-radius: 12px;
+    padding: 4px 0;
+}
+
+/* ── 상태 뱃지 ── */
+.status-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 0.72rem;
+    color: #64748B;
+    padding: 3px 8px;
+    background: #F1F5F9;
+    border-radius: 6px;
+    margin-bottom: 10px;
+}
+.status-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: #10B981;
+    display: inline-block;
+}
+[data-theme="dark"] .status-badge {
+    background: #1E293B;
+    color: #CBD5E1;
+}
+
+/* ── 푸터 ── */
+.chat-footer {
+    text-align: center;
+    font-size: 0.72rem;
+    color: #94A3B8;
+    margin-top: 1.5rem;
+}
 </style>
 """, unsafe_allow_html=True)
 
 
-def initialize_session_state():
-    """Initialize session state variables"""
-    if 'pipeline' not in st.session_state:
-        st.session_state.pipeline = None
-    if 'config' not in st.session_state:
-        st.session_state.config = None
-    if 'history' not in st.session_state:
-        st.session_state.history = []
+# ─────────────────────────────────────────────────────────────────────────────
+# Session state
+# ─────────────────────────────────────────────────────────────────────────────
+
+WELCOME_MSG = "안녕하세요! KSP 지식공유사업 관련 문서에서 답변을 찾아드립니다. 궁금한 내용을 자유롭게 질문해 주세요. 😊"
 
 
-def load_pipeline(use_rerank: bool = False):
-    """Load or reload RAG pipeline"""
+def _init_state():
+    defaults = {
+        "pipeline": None,
+        "config": None,
+        "messages": [{"role": "assistant", "content": WELCOME_MSG}],
+        "use_rerank": False,
+    }
+    for k, v in defaults.items():
+        if k not in st.session_state:
+            st.session_state[k] = v
+
+
+def _load_pipeline(use_rerank: bool = False) -> bool:
     try:
         config = get_config()
         st.session_state.config = config
@@ -114,199 +277,233 @@ def load_pipeline(use_rerank: bool = False):
         return False
 
 
-def main():
-    """Main Streamlit app"""
-    initialize_session_state()
-    
-    # Header
-    st.markdown('<div class="main-header">🔍 KSP RAG System</div>', unsafe_allow_html=True)
-    st.markdown("**Knowledge Sharing Program 문서 검색 및 질의응답 시스템**")
-    
-    # Sidebar - Configuration
+def _patch_config(top_k, rerank_top_k, bm25_boost, dense_boost, min_score):
+    """사이드바 슬라이더 값을 런타임 config에 반영 (인덱스 재빌드 불필요)"""
+    config = get_config()
+    try:
+        config.top_k = top_k
+        config.rerank_top_k = rerank_top_k
+        config.elastic_bm25_boost = bm25_boost
+        config.elastic_dense_boost = dense_boost
+        config.retrieval_min_score = min_score
+    except Exception:
+        # pydantic frozen 모델일 경우 setattr 우회
+        object.__setattr__(config, "top_k", top_k)
+        object.__setattr__(config, "rerank_top_k", rerank_top_k)
+        object.__setattr__(config, "elastic_bm25_boost", bm25_boost)
+        object.__setattr__(config, "elastic_dense_boost", dense_boost)
+        object.__setattr__(config, "retrieval_min_score", min_score)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Sidebar
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _render_sidebar():
     with st.sidebar:
-        st.header("⚙️ 설정")
-        
-        # Load config
-        if st.session_state.config is None:
-            config = get_config()
-            st.session_state.config = config
-        else:
-            config = st.session_state.config
-        
-        # Display current configuration
-        st.subheader("현재 설정")
-        st.info(f"""
-**모드**: {config.mode}  
-**Retriever**: {config.retriever_mode}  
-**LLM Provider**: {config.llm_provider}
-        """)
-        
-        # Advanced options
-        st.subheader("고급 옵션")
-        use_rerank = st.checkbox("LLM 리랭킹 사용", value=False, help="검색 결과를 LLM으로 재정렬 (품질 향상, 속도 저하)")
-        
-        # Reload pipeline button
-        if st.button("🔄 파이프라인 재로드", help="설정 변경 후 클릭"):
-            with st.spinner("파이프라인 재로드 중..."):
-                if load_pipeline(use_rerank=use_rerank):
-                    st.success("✅ 파이프라인이 재로드되었습니다")
-                    st.rerun()
-        
-        # System info
-        with st.expander("🔧 시스템 정보"):
-            st.json({
-                "mode": config.mode,
-                "retriever_mode": config.retriever_mode,
-                "llm_provider": config.llm_provider,
-                "top_k": config.top_k,
-                "rerank_top_k": config.rerank_top_k,
-                "llm_model": config.llm_model if config.llm_provider == "local_api" else config.server_llm_model
-            })
-        
-        # History
-        if st.session_state.history:
-            st.subheader("📜 히스토리")
-            if st.button("🗑️ 히스토리 지우기"):
-                st.session_state.history = []
-                st.rerun()
-            
-            for i, item in enumerate(reversed(st.session_state.history[-5:])):
-                with st.expander(f"Q{len(st.session_state.history)-i}: {item['query'][:30]}..."):
-                    st.text(item['query'])
-    
-    # Main content
-    st.markdown("---")
-    
-    # Initialize pipeline
-    if st.session_state.pipeline is None:
-        with st.spinner("파이프라인 초기화 중..."):
-            if not load_pipeline(use_rerank=use_rerank):
-                st.stop()
-    
-    # Query input
-    st.subheader("💬 질문하기")
-    
-    col1, col2 = st.columns([4, 1])
-    
-    with col1:
-        query = st.text_input(
-            "질문을 입력하세요",
-            placeholder="예: 온두라스 연금 시스템의 주요 특징은 무엇인가요?",
-            label_visibility="collapsed"
+        # ── 헤더 ────────────────────────────────────────
+        st.markdown(
+            '<div style="display:flex;align-items:center;gap:10px;margin-bottom:4px;">'
+            '<div style="width:36px;height:36px;background:linear-gradient(135deg,#2563EB,#0EA5E9);'
+            'border-radius:9px;display:flex;align-items:center;justify-content:center;'
+            'font-size:18px;flex-shrink:0;box-shadow:0 3px 8px rgba(37,99,235,0.3);">📘</div>'
+            '<div>'
+            '<div style="font-size:1.05rem;font-weight:700;line-height:1.3;">KSP Knowledge Hub</div>'
+            '<div style="font-size:0.72rem;color:#94A3B8;line-height:1.3;">Knowledge Sharing Program Q&A</div>'
+            '</div>'
+            '</div>',
+            unsafe_allow_html=True,
         )
-    
-    with col2:
-        ask_button = st.button("🔍 검색", type="primary", use_container_width=True)
-    
-    # Example queries (raw 문서 주제 기반: 남아공 인프라/농촌개발, 카자흐스탄 중소기업/신용보증)
-    st.caption("예시 질문:")
-    example_cols = st.columns(3)
-    examples = [
-        "남아공 통합 인프라 구축전략의 핵심 내용은?",
-        "농촌개발계획 수립과 관련된 주요 내용을 요약해 주세요.",
-        "카자흐스탄 중소기업 육성을 위한 정책의 특징은?",
-        "신용보증제도와 신용평가시스템 구축 방안은?",
-        "KSP(Knowledge Sharing Program)란 무엇인가요?",
-        "인프라 구축과 농촌 개발을 어떻게 연계할 수 있나요?",
-    ]
-    for i, example in enumerate(examples):
-        with example_cols[i % 3]:
-            if st.button(example, key=f"example_{i}", use_container_width=True):
-                query = example
-                ask_button = True
-    
-    # Process query
-    if ask_button and query:
-        try:
-            with st.spinner("🔍 검색 중..."):
-                stream_gen, result_holder = st.session_state.pipeline.ask_stream(
-                    query, use_rerank=use_rerank
+        st.divider()
+
+        # ── 검색 파라미터 ──────────────────────────────
+        st.markdown("#### 🔍 검색 설정")
+        top_k = st.slider(
+            "Top-K (초기 검색 문서 수)",
+            min_value=1, max_value=30,
+            value=st.session_state.get("_top_k", 12),
+            step=1,
+            help="Elasticsearch에서 처음 가져올 문서 수",
+        )
+        rerank_top_k = st.slider(
+            "Rerank Top-K (최종 문서 수)",
+            min_value=1, max_value=20,
+            value=st.session_state.get("_rerank_top_k", 5),
+            step=1,
+            help="리랭킹 후 LLM 프롬프트에 넣을 문서 수",
+        )
+
+        st.markdown("#### ⚖️ 검색 가중치")
+        bm25_boost = st.slider(
+            "BM25 Boost",
+            min_value=0.0, max_value=5.0,
+            value=st.session_state.get("_bm25_boost", 1.0),
+            step=0.1,
+            help="키워드 검색(BM25) 가중치. 높을수록 키워드 매칭 강조",
+        )
+        dense_boost = st.slider(
+            "Dense Boost",
+            min_value=0.0, max_value=5.0,
+            value=st.session_state.get("_dense_boost", 1.0),
+            step=0.1,
+            help="의미 벡터 검색 가중치. 높을수록 의미 유사도 강조",
+        )
+        min_score = st.slider(
+            "최소 점수 비율",
+            min_value=0.0, max_value=1.0,
+            value=st.session_state.get("_min_score", 0.0),
+            step=0.05,
+            help="0이면 비활성. 최고 점수 대비 이 비율 미만 문서 제외 (0.4~0.5 권장)",
+        )
+
+        # 슬라이더 값 세션에 저장
+        st.session_state["_top_k"] = top_k
+        st.session_state["_rerank_top_k"] = rerank_top_k
+        st.session_state["_bm25_boost"] = bm25_boost
+        st.session_state["_dense_boost"] = dense_boost
+        st.session_state["_min_score"] = min_score
+
+        st.divider()
+
+        # ── 리랭킹 토글 ────────────────────────────────
+        use_rerank = st.toggle(
+            "리랭킹 사용",
+            value=st.session_state.use_rerank,
+            help="LLM으로 검색 결과 재정렬. 품질 향상, 응답 속도 저하.",
+        )
+        if use_rerank != st.session_state.use_rerank:
+            st.session_state.use_rerank = use_rerank
+            st.session_state.pipeline = None
+
+        st.divider()
+
+        # ── 버튼 ────────────────────────────────────────
+        if st.button("💬 대화 초기화", use_container_width=True):
+            st.session_state.messages = [{"role": "assistant", "content": WELCOME_MSG}]
+            st.rerun()
+
+        if st.button("🔄 파이프라인 재로드", use_container_width=True):
+            st.session_state.pipeline = None
+            st.rerun()
+
+        # ── 시스템 정보 ─────────────────────────────────
+        with st.expander("시스템 정보", expanded=False):
+            config = st.session_state.config
+            if config:
+                retriever_label = "Elasticsearch" if config.retriever_mode == "elastic" else "로컬"
+                llm_model = (
+                    config.llm_model
+                    if config.llm_provider == "local_api"
+                    else config.server_llm_model
                 )
+                st.markdown(
+                    '<div style="display:flex;align-items:center;gap:6px;margin-bottom:6px;">'
+                    '<span style="width:7px;height:7px;border-radius:50%;background:#10B981;display:inline-block;"></span>'
+                    '<span style="font-size:0.75rem;">연결됨</span>'
+                    '</div>',
+                    unsafe_allow_html=True,
+                )
+                st.caption(f"모드: `{config.mode}`")
+                st.caption(f"검색: `{retriever_label}`")
+                st.caption(f"인덱스: `{config.elastic_index_name}`")
+                st.caption(f"LLM: `{llm_model}`")
 
-            st.markdown("---")
-            st.subheader("💬 답변")
-            message_placeholder = st.empty()
-            accumulated = ""
-            for chunk in stream_gen:
-                accumulated += chunk
-                message_placeholder.markdown(accumulated)
+    return top_k, rerank_top_k, bm25_boost, dense_boost, min_score, use_rerank
 
-            response = result_holder.get("response")
-            if not response:
-                st.error("답변 생성 중 오류가 발생했습니다.")
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Main
+# ─────────────────────────────────────────────────────────────────────────────
+
+def main():
+    _init_state()
+
+    # 설정 로드
+    if st.session_state.config is None:
+        try:
+            st.session_state.config = get_config()
+        except Exception:
+            st.session_state.config = None
+
+    # 사이드바 렌더
+    top_k, rerank_top_k, bm25_boost, dense_boost, min_score, use_rerank = _render_sidebar()
+
+    # ── 파이프라인 초기화 ────────────────────────────────
+    if st.session_state.pipeline is None:
+        with st.spinner("시스템 초기화 중…"):
+            if not _load_pipeline(use_rerank=use_rerank):
                 st.stop()
 
-            # 스트리밍과 동일하게 마크다운으로 최종 표시
-            message_placeholder.markdown(response.answer)
+    # ── 기존 대화 메시지 출력 ────────────────────────────
+    for msg in st.session_state.messages:
+        with st.chat_message(msg["role"]):
+            st.markdown(msg["content"])
+            if msg["role"] == "assistant" and msg.get("docs"):
+                _render_source_docs(msg["docs"], msg.get("citations", []))
 
-            citations = extract_citations(response.answer, response.retrieved_docs)
-            st.session_state.history.append({
-                "query": query,
-                "answer": response.answer,
-                "citations": citations,
-                "num_docs": len(response.retrieved_docs),
-            })
+    # ── 사용자 입력 ──────────────────────────────────────
+    if prompt := st.chat_input("궁금한 내용을 입력하세요…"):
+        prompt = (prompt or "").strip()
+        if not prompt:
+            st.toast("질문을 입력해 주세요.")
+            st.stop()
 
-            # 출처 (인용 정보 + 검색된 문서 + 메타데이터)
-            st.subheader("📚 출처")
-            if citations:
-                for cite in citations:
-                    doc_num = cite.get('doc_num', '?')
-                    doc = None
-                    if 1 <= doc_num <= len(response.retrieved_docs):
-                        doc = response.retrieved_docs[doc_num - 1]
-                    display_name = _display_name(doc.metadata) if doc else cite.get('doc_id', 'Unknown')
-                    page_num = cite.get('page_num', 'N/A')
-                    content_type = cite.get('content_type', 'text')
-                    st.markdown(f"""
-<div class="citation-box">
-    <strong>📄 문서 {doc_num}</strong>: {display_name}<br>
-    <small>페이지: {page_num} | 유형: {content_type}</small>
-</div>
-                    """, unsafe_allow_html=True)
-            else:
-                st.info("인용 정보가 없습니다.")
+        # 사용자 메시지 추가 & 출력
+        st.session_state.messages.append({"role": "user", "content": prompt})
+        with st.chat_message("user"):
+            st.markdown(prompt)
 
-            if len(response.retrieved_docs) == 0:
-                st.warning(
-                    "**검색된 문서가 0건입니다.** "
-                    "Elasticsearch 인덱스가 비어 있거나 아직 구축되지 않았을 수 있습니다. "
-                    "터미널에서 `make elastic-up` 후 `make index-elastic`을 실행한 뒤 다시 시도해 보세요."
+        # config 런타임 패치 (슬라이더 값 반영)
+        _patch_config(top_k, rerank_top_k, bm25_boost, dense_boost, min_score)
+
+        # 답변 생성
+        with st.chat_message("assistant"):
+            placeholder = st.empty()
+            placeholder.markdown("검색 및 답변 생성 중…")
+            try:
+                stream_gen, result_holder = st.session_state.pipeline.ask_stream(
+                    prompt, use_rerank=use_rerank
                 )
 
-            with st.expander(f"📄 검색된 문서 ({len(response.retrieved_docs)}개)"):
-                if len(response.retrieved_docs) == 0:
-                    st.caption("인덱스 구축: make index-elastic (인제스트·청크는 이미 있어야 함)")
-                for i, doc in enumerate(response.retrieved_docs, 1):
-                    display_name = _display_name(doc.metadata)
-                    page_num = doc.metadata.get('page_num', 'N/A')
-                    chunk_id = doc.metadata.get('chunk_id', 'N/A')
-                    content_type = doc.metadata.get('content_type', 'text')
-                    doc_id_display = display_name[:47] + "..." if len(display_name) > 50 else display_name
-                    content_preview = doc.content[:300] + ("..." if len(doc.content) > 300 else "")
-                    st.markdown(f"""
-**#{i}** (Score: {doc.score:.4f})  
-**문서**: {doc_id_display}  
-**페이지**: {page_num} | **청크**: {chunk_id} | **유형**: {content_type}
-                    """)
-                    st.markdown(f'<div class="doc-preview">{content_preview}</div>', unsafe_allow_html=True)
-                    st.markdown("---")
+                # 스트리밍 출력
+                accumulated = ""
+                for chunk in stream_gen:
+                    accumulated += chunk
+                    placeholder.markdown(accumulated + "▌")
 
-            with st.expander("ℹ️ 메타데이터"):
-                st.json(response.metadata)
+                response = result_holder.get("response")
+                final_answer = response.answer if response else accumulated
+                placeholder.markdown(final_answer)
 
-        except Exception as e:
-            st.error(f"❌ 오류 발생: {e}")
-            import traceback
-            with st.expander("상세 오류"):
-                st.code(traceback.format_exc())
-    
-    elif ask_button:
-        st.warning("⚠️ 질문을 입력해주세요.")
-    
-    # Footer
-    st.markdown("---")
-    st.caption("🚀 KSP RAG System | Docker-based Hybrid RAG with Local/Server Mode Support")
+                # 참고 문서 표시 & 히스토리 저장
+                docs = response.retrieved_docs if response else []
+                citations = extract_citations(final_answer, docs) if docs else []
+                _render_source_docs(docs, citations)
+
+                st.session_state.messages.append({
+                    "role": "assistant",
+                    "content": final_answer,
+                    "docs": docs,
+                    "citations": citations,
+                })
+
+            except Exception as e:
+                err_msg = f"오류가 발생했습니다: {e}"
+                placeholder.error(err_msg)
+                st.session_state.messages.append(
+                    {"role": "assistant", "content": err_msg}
+                )
+                import traceback
+                with st.expander("상세 오류"):
+                    st.code(traceback.format_exc())
+
+    # ── 푸터 ─────────────────────────────────────────────
+    st.markdown(
+        '<div class="chat-footer">'
+        'KSP Knowledge Hub · Hybrid RAG (Elasticsearch + BGE) · Powered by LLM'
+        '</div>',
+        unsafe_allow_html=True,
+    )
 
 
 if __name__ == "__main__":

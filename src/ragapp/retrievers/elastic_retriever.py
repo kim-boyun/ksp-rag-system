@@ -32,6 +32,7 @@ def _doc_id_from_chunk_id(chunk_id: str) -> str:
 
 from ragapp.pipeline.types import Document, Retriever
 from ragapp.embeddings.bge import BGEEmbedding
+from ragapp.config import get_config
 
 
 class ElasticHybridRetriever(Retriever):
@@ -44,7 +45,7 @@ class ElasticHybridRetriever(Retriever):
         host: str = "localhost",
         port: int = 9200,
         index_name: str = "ksp_rag_index",
-        embedding_model: str = "BAAI/bge-small-en-v1.5"
+        embedding_model: str = "BAAI/bge-m3"
     ):
         """
         Initialize Elasticsearch retriever
@@ -84,56 +85,61 @@ class ElasticHybridRetriever(Retriever):
         self,
         query: str,
         top_k: int = 5,
+        doc_ids: List[str] | None = None,
+        content_types: List[str] | None = None,
         **kwargs
     ) -> List[Document]:
         """
-        Retrieve documents using Elasticsearch hybrid search
-        
-        Args:
-            query: Search query
-            top_k: Number of results to return
-            
-        Returns:
-            List of retrieved documents
+        Retrieve documents using Elasticsearch hybrid search.
+
+        Score = BM25_score * bm25_boost + (cosineSimilarity(query_emb, doc_emb) + 1.0) * dense_boost
+        - BM25: 키워드 매칭 점수 (한국어는 standard 분석기 한계로 낮게 나올 수 있음)
+        - Dense: 0~2 범위 (cosine -1~1 이므로 +1 시 0~2). 둘을 더하므로 절대값이 0.05 같은 작은 수가 나올 수 있음.
+        doc_ids, content_types 지정 시 메타데이터 필터 적용.
         """
+        config = get_config()
+        bm25_boost = config.elastic_bm25_boost
+        dense_boost = config.elastic_dense_boost
+        min_score_ratio = config.retrieval_min_score
+        
         logger.info(f"🔍 Retrieving from Elasticsearch: {query}")
         logger.info(f"Top K: {top_k}")
         
-        # Generate query embedding
         query_embedding = self.embedder.embed_query(query)
         
-        # Hybrid search with RRF (Reciprocal Rank Fusion)
-        # Elasticsearch 8.12+ supports RRF natively
-        search_body = {
-            "size": top_k,
-            "query": {
-                "bool": {
-                    "should": [
-                        # BM25 search on text field
-                        {
-                            "match": {
-                                "content": {
-                                    "query": query,
-                                    "boost": 1.0
-                                }
-                            }
+        must_clauses = []
+        if doc_ids:
+            must_clauses.append({"terms": {"metadata.doc_id": doc_ids}})
+        if content_types:
+            must_clauses.append({"terms": {"metadata.content_type": content_types}})
+        
+        bool_query = {
+            "should": [
+                {"match": {"content": {"query": query, "boost": bm25_boost}}},
+                {
+                    "script_score": {
+                        "query": {"match_all": {}},
+                        "script": {
+                            "source": "(cosineSimilarity(params.query_vector, 'embedding') + 1.0) * params.dense_boost",
+                            "params": {
+                                "query_vector": query_embedding.tolist(),
+                                "dense_boost": dense_boost,
+                            },
                         },
-                        # Dense vector search
-                        {
-                            "script_score": {
-                                "query": {"match_all": {}},
-                                "script": {
-                                    "source": "cosineSimilarity(params.query_vector, 'embedding') + 1.0",
-                                    "params": {
-                                        "query_vector": query_embedding.tolist()
-                                    }
-                                }
-                            }
-                        }
-                    ]
-                }
-            },
-            "_source": ["content", "metadata", "chunk_id"]
+                    }
+                },
+            ]
+        }
+        if must_clauses:
+            bool_query["filter"] = must_clauses
+        
+        # min_score 적용을 위해 충분히 많이 가져온 뒤 후필터할 수 있음
+        size = top_k * 2 if min_score_ratio > 0 else top_k
+        
+        search_body = {
+            "size": size,
+            "query": {"bool": bool_query},
+            "_source": ["content", "metadata", "chunk_id"],
         }
         
         try:
@@ -142,7 +148,6 @@ class ElasticHybridRetriever(Retriever):
                 body=search_body
             )
             
-            # Convert to Document objects (doc_id/source_path 보강 → UI에서 원본명 표시)
             documents = []
             for hit in response['hits']['hits']:
                 meta = dict(hit['_source'].get('metadata') or {})
@@ -159,6 +164,15 @@ class ElasticHybridRetriever(Retriever):
                     score=hit['_score']
                 )
                 documents.append(doc)
+            
+            # 관련도 임계값: 점수를 max로 정규화한 뒤 min_score_ratio 미만 제외
+            if documents and min_score_ratio > 0:
+                max_s = max(d.score for d in documents)
+                if max_s > 0:
+                    documents = [d for d in documents if (d.score / max_s) >= min_score_ratio]
+                documents = documents[:top_k]
+            else:
+                documents = documents[:top_k]
             
             if len(documents) == 0:
                 logger.warning(

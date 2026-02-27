@@ -35,10 +35,15 @@ class Chunk:
         return json.dumps(self.to_dict(), ensure_ascii=False)
 
 
+# 이 길이 미만의 청크는 스킵 (노이즈·불완전 문장 감소)
+MIN_CHUNK_LENGTH = 15
+
+
 class TextChunker:
     """
     Text chunker using LangChain's RecursiveCharacterTextSplitter
-    Splits by paragraph, sentence, then character
+    Splits by paragraph, sentence, then character.
+    Very short chunks (< MIN_CHUNK_LENGTH) are skipped.
     """
     
     def __init__(self, chunk_size: int = None, chunk_overlap: int = None):
@@ -75,24 +80,26 @@ class TextChunker:
             page_chunks = self.splitter.split_text(page.text)
             
             for chunk_idx, chunk_text in enumerate(page_chunks):
+                content = chunk_text.strip()
+                if len(content) < MIN_CHUNK_LENGTH:
+                    continue
                 chunk_id = self._generate_chunk_id(
                     doc.doc_id,
                     page.page_num,
                     chunk_idx
                 )
-                
                 chunk = Chunk(
                     chunk_id=chunk_id,
                     doc_id=doc.doc_id,
                     source_path=doc.source_path,
                     page_start=page.page_num,
                     page_end=page.page_num,
-                    content=chunk_text.strip(),
+                    content=content,
                     content_type="text",
                     metadata={
                         "chunk_idx": chunk_idx,
                         "page_num": page.page_num,
-                        "char_count": len(chunk_text)
+                        "char_count": len(content)
                     }
                 )
                 chunks.append(chunk)
@@ -124,24 +131,26 @@ class TextChunker:
         text_chunks = self.splitter.split_text(text)
         
         for chunk_idx, chunk_text in enumerate(text_chunks):
+            content = chunk_text.strip()
+            if len(content) < MIN_CHUNK_LENGTH:
+                continue
             chunk_id = self._generate_chunk_id(
                 doc.doc_id,
                 start_page,
                 chunk_idx,
                 suffix=f"_p{start_page}-{end_page}"
             )
-            
             chunk = Chunk(
                 chunk_id=chunk_id,
                 doc_id=doc.doc_id,
                 source_path=doc.source_path,
                 page_start=start_page,
                 page_end=end_page,
-                content=chunk_text.strip(),
+                content=content,
                 content_type="text",
                 metadata={
                     "chunk_idx": chunk_idx,
-                    "char_count": len(chunk_text),
+                    "char_count": len(content),
                     "multi_page": True
                 }
             )

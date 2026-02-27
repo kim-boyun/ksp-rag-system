@@ -288,8 +288,9 @@ def index_elastic(
     host: str = typer.Option(None, help="Elasticsearch host (default: from config)"),
     port: int = typer.Option(None, help="Elasticsearch port (default: from config)"),
     index_name: str = typer.Option(None, help="Index name (default: from config)"),
-    model: str = typer.Option("BAAI/bge-small-en-v1.5", help="BGE embedding model"),
+    model: str = typer.Option("BAAI/bge-m3", help="BGE embedding model"),
     batch_size: int = typer.Option(32, help="Batch size for embedding"),
+    index_batch_size: int = typer.Option(None, help="Chunks per streaming batch (default: 3000 for bge-m3, 10000 else; reduce if OOM)"),
     recreate: bool = typer.Option(False, help="Recreate index if exists")
 ):
     """
@@ -335,6 +336,7 @@ def index_elastic(
             index_name=index_name,
             embedding_model=model,
             batch_size=batch_size,
+            index_batch_size=index_batch_size,
             recreate=recreate
         )
         

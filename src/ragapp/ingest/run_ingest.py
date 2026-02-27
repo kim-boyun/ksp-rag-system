@@ -7,7 +7,7 @@ from typing import List
 import json
 from loguru import logger
 
-from ragapp.ingest.loaders import PDFLoader, PAGE_RANGE_SIZE
+from ragapp.ingest.loaders import PDFLoader, PAGE_RANGE_SIZE, normalize_doc_id
 from ragapp.ingest.chunkers import TextChunker, Chunk
 from ragapp.ingest.tables import TableExtractor
 from ragapp.ingest.figures import (
@@ -84,7 +84,7 @@ def run_ingestion(
                     logger.info(
                         f"[{idx}/{total_files}] Processing ({progress_pct:.1f}%): {pdf_path.name}"
                     )
-                    doc_id = pdf_path.stem
+                    doc_id = normalize_doc_id(pdf_path.stem)
                     source_path = str(pdf_path)
                     total_pages = pdf_loader.get_page_count(pdf_path)
 
