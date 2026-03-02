@@ -85,7 +85,7 @@
 | 용도 | 기본 모델 | 비고 |
 |------|-----------|------|
 | **Config 기본** (로컬 retriever용) | `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2` | config.local_embedding_model |
-| **Elasticsearch 인덱싱/검색** | `BAAI/bge-small-en-v1.5` | index-elastic CLI 기본값, 파이프라인은 config.local_embedding_model 사용 (운영에서는 `BAAI/bge-m3` 권장) |
+| **Elasticsearch 인덱싱/검색** | `BAAI/bge-small-en-v1.5` | index-elastic CLI 기본값, 파이프라인은 config.local_embedding_model 사용 |
 | **로컬 인덱스(FAISS)** | `BAAI/bge-m3` | build_local_index 기본, 다국어 1024차원 |
 | **BGE 클래스 기본** | `BAAI/bge-m3` | BGEEmbedding 인자 생략 시 |
 
@@ -104,21 +104,6 @@
 - `bge-small-en-v1.5`: 384
 - `bge-m3`: 1024
 - `paraphrase-multilingual-MiniLM-L12-v2`: 384
-
-### 3.4 bge-small / bge-m3 병행 전략
-
-- **bge-small** (`BAAI/bge-small-en-v1.5`)
-  - 장점: 모델 크기 작고 빠름 → 로컬 개발·테스트용, Windows/저사양 환경에서 적합
-  - 사용 예:
-    - 로컬 인덱스: `ragapp index --embedding-model BAAI/bge-small-en-v1.5`
-    - ES 인덱스: `ragapp index-elastic --model BAAI/bge-small-en-v1.5`
-- **bge-m3** (`BAAI/bge-m3`)
-  - 장점: 1024차원, 다국어·정확도 우선 시 적합 → 운영/지식 허브용 권장
-  - 사용 예:
-    - 로컬 인덱스: `ragapp index --embedding-model BAAI/bge-m3`
-    - ES 인덱스: `ragapp index-elastic --model BAAI/bge-m3`
-- **중요**: 하나의 인덱스(FAISS/Elasticsearch) 안에서는 **인덱싱 시점의 임베딩 모델과 검색 시점의 임베딩 모델이 동일해야** 함  
-  - 384차원(bge-small)로 만든 인덱스에는 384차원 모델만, 1024차원(bge-m3) 인덱스에는 1024차원 모델만 사용 가능
 
 ---
 
@@ -210,7 +195,7 @@
 | 항목 | 값 |
 |------|-----|
 | 엔드포인트 | `SERVER_LLM_BASE_URL` + `/v1/completions` (또는 chat) |
-| 모델 | `SERVER_LLM_MODEL` (예: openai/gpt-oss-120b) |
+| 모델 | `SERVER_LLM_MODEL` (예: meta-llama/Llama-2-7b-chat-hf) |
 | 용도 | vLLM 등 OpenAI 호환 HTTP 서버 |
 
 ---
@@ -279,7 +264,7 @@
 | ELASTIC_PORT | 9200 | ES 포트 |
 | ELASTIC_INDEX_NAME | ksp_rag_index | 인덱스 이름 |
 | SERVER_LLM_BASE_URL | http://172.16.0.52:8000 | 서버 LLM URL |
-| SERVER_LLM_MODEL | openai/gpt-oss-120b | 서버 LLM 모델 |
+| SERVER_LLM_MODEL | meta-llama/Llama-2-7b-chat-hf | 서버 LLM 모델 |
 | local_embedding_model | paraphrase-multilingual-MiniLM-L12-v2 | config 기본 (Elastic 파이프라인에서도 사용) |
 | EXTRACT_FIGURES | false | figure 추출 여부 |
 | QUERY_EXPANSION_ENABLED | true | 쿼리 확장 사용 여부 |

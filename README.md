@@ -133,7 +133,7 @@ curl http://localhost:8000/health
 **환경 변수** (선택 사항):
 ```bash
 # ops/gpu/.env.gpu (선택)
-SERVER_LLM_MODEL=openai/gpt-oss-120b
+SERVER_LLM_MODEL=meta-llama/Llama-2-7b-chat-hf
 GPU_MEMORY_UTILIZATION=0.9
 ```
 
@@ -456,9 +456,6 @@ make ingest-tables
 - [x] PDF 인제스트 (텍스트 + 테이블 추출)
 - [x] 하이브리드 검색 (BM25 + FAISS + RRF)
 - [x] BGE 임베딩 (BAAI/bge-m3, BAAI/bge-small-en-v1.5)
-  - bge-small: 384차원, 가볍고 빠른 **로컬/테스트용**
-  - bge-m3: 1024차원, 다국어 고품질 **운영/정확도 중시용**
-  - 동일 인덱스에서는 **인덱싱 시 사용한 모델과 검색 시 사용하는 모델이 반드시 같아야 함** (384 ↔ 1024 혼용 불가)
 - [x] LLM 리랭킹 (OpenAI API)
 - [x] LLM 생성 (OpenAI API, vLLM 지원)
 - [x] 인용 추출 및 표시

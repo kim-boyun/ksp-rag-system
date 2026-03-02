@@ -123,7 +123,7 @@ ELASTIC_INDEX_NAME=ksp_rag_index
 # LLM (외부 GPU 서버의 vLLM)
 LLM_PROVIDER=server_http
 SERVER_LLM_BASE_URL=http://172.16.0.52:8000  # GPU 서버 base URL (vLLM)
-SERVER_LLM_MODEL=openai/gpt-oss-120b
+SERVER_LLM_MODEL=meta-llama/Llama-2-7b-chat-hf
 
 # 검색 설정
 TOP_K=12

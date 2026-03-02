@@ -64,40 +64,23 @@ def _render_citations(citations: list, docs: list):
 
 
 # ── 참고 문서 렌더러 (답변 하단 expander) ─────────────────────────────────────
-def _normalize_scores_to_01(docs: list) -> list:
-    """이번 결과 내 최소·최대로 점수를 0~1로 표준화."""
-    if not docs:
-        return []
-    min_s = min(d.score for d in docs)
-    max_s = max(d.score for d in docs)
-    if max_s <= min_s:
-        return [1.0] * len(docs)
-    return [(d.score - min_s) / (max_s - min_s) for d in docs]
-
-
 def _render_source_docs(docs: list, citations: list):
     if not docs:
         return
     cited_nums = {c.get("doc_num") for c in (citations or [])}
-    norm_scores = _normalize_scores_to_01(docs)
     with st.expander(f"📄 참고 문서 ({len(docs)}건)", expanded=False):
-        st.caption(
-            "점수는 이번 결과 안에서 0~1로 표준화했습니다. 1에 가까울수록 상대적으로 관련도가 높습니다."
-        )
         for i, doc in enumerate(docs, 1):
             name = _short_name(_display_name(doc.metadata))
             page = doc.metadata.get("page_num", "N/A")
             ct = doc.metadata.get("content_type", "text")
             ct_icon = _content_type_icon(ct)
-            norm_score = norm_scores[i - 1] if i <= len(norm_scores) else 0.0
-            rel_label, rel_color = _relevance_label(norm_score)
+            score = doc.score
             cited_marker = " 🔗" if i in cited_nums else ""
             preview = doc.content[:200].strip().replace("\n", " ")
             if len(doc.content) > 200:
                 preview += "…"
             st.markdown(
-                f"**{i}. {name}{cited_marker}** &nbsp; {ct_icon} {ct} · 페이지 {page} &nbsp; "
-                f"<span style='font-size:0.75rem;color:{rel_color};background:{rel_color}22;padding:2px 6px;border-radius:4px;'>{rel_label} {norm_score:.2f}</span>  \n"
+                f"**{i}. {name}{cited_marker}** &nbsp; {ct_icon} {ct} · 페이지 {page} · 점수 `{score:.3f}`  \n"
                 f"<span style='font-size:0.82rem;color:#64748B;'>{preview}</span>",
                 unsafe_allow_html=True,
             )
@@ -405,7 +388,6 @@ def _render_sidebar():
                 )
                 st.caption(f"모드: `{config.mode}`")
                 st.caption(f"검색: `{retriever_label}`")
-                st.caption(f"인덱스: `{config.elastic_index_name}`")
                 st.caption(f"LLM: `{llm_model}`")
 
     return top_k, rerank_top_k, bm25_boost, dense_boost, min_score, use_rerank
@@ -443,10 +425,6 @@ def main():
 
     # ── 사용자 입력 ──────────────────────────────────────
     if prompt := st.chat_input("궁금한 내용을 입력하세요…"):
-        prompt = (prompt or "").strip()
-        if not prompt:
-            st.toast("질문을 입력해 주세요.")
-            st.stop()
 
         # 사용자 메시지 추가 & 출력
         st.session_state.messages.append({"role": "user", "content": prompt})
@@ -459,7 +437,6 @@ def main():
         # 답변 생성
         with st.chat_message("assistant"):
             placeholder = st.empty()
-            placeholder.markdown("검색 및 답변 생성 중…")
             try:
                 stream_gen, result_holder = st.session_state.pipeline.ask_stream(
                     prompt, use_rerank=use_rerank

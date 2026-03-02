@@ -82,7 +82,7 @@ KSP RAG System은 **역할 분리 아키텍처**를 채택하여 운영 서버�
    - 모델 캐싱 및 배치 처리
 
 **환경 변수**: `.env.gpu` (선택 사항)
-- `SERVER_LLM_MODEL=openai/gpt-oss-120b`
+- `SERVER_LLM_MODEL=meta-llama/Llama-2-7b-chat-hf`
 - `GPU_MEMORY_UTILIZATION=0.9`
 
 ## 🔄 네트워크 흐름

@@ -2,6 +2,7 @@
 BGE (BAAI General Embedding) model wrapper
 Supports multilingual embeddings with caching
 """
+import os
 import re
 from typing import List
 import numpy as np
@@ -56,6 +57,17 @@ class BGEEmbedding:
         
         # Load model (cached to ~/.cache/huggingface)
         self.model = SentenceTransformer(model_name, device=device)
+
+        # Limit maximum sequence length for stability on MPS / limited-memory devices.
+        # Can be overridden with env BGE_MAX_SEQ_LENGTH (tokens).
+        try:
+            max_seq_default = 1024
+            max_seq_env = os.getenv("BGE_MAX_SEQ_LENGTH")
+            max_seq = int(max_seq_env) if max_seq_env is not None else max_seq_default
+            self.model.max_seq_length = max_seq
+            logger.info(f"Max sequence length set to: {self.model.max_seq_length}")
+        except Exception as e:
+            logger.warning(f"Failed to set max_seq_length on BGE model: {e}")
         
         # Get embedding dimension
         self.dimension = self.model.get_sentence_embedding_dimension()
@@ -93,17 +105,51 @@ class BGEEmbedding:
         """
         normalized = [_normalize_text_for_embedding(t) for t in texts]
         logger.info(f"Embedding {len(normalized)} documents...")
-        
-        embeddings = self.model.encode(
-            normalized,
-            batch_size=batch_size,
-            convert_to_numpy=True,
-            normalize_embeddings=True,
-            show_progress_bar=True
-        )
-        
-        logger.info(f"✅ Embedded {len(normalized)} documents")
-        return embeddings
+
+        # Robust embedding with automatic batch size backoff on memory errors (MPS / CUDA).
+        current_batch_size = max(1, batch_size)
+
+        while True:
+            try:
+                embeddings = self.model.encode(
+                    normalized,
+                    batch_size=current_batch_size,
+                    convert_to_numpy=True,
+                    normalize_embeddings=True,
+                    show_progress_bar=True
+                )
+                logger.info(f"✅ Embedded {len(normalized)} documents (batch_size={current_batch_size})")
+                return embeddings
+            except RuntimeError as e:
+                msg = str(e)
+                # Handle memory-related errors by reducing batch size
+                if (
+                    "out of memory" in msg.lower()
+                    or "mps backend out of memory" in msg.lower()
+                    or "invalid buffer size" in msg.lower()
+                ):
+                    if current_batch_size == 1:
+                        logger.error("Memory error even with batch_size=1; giving up.")
+                        raise
+                    new_batch_size = max(1, current_batch_size // 2)
+                    logger.warning(
+                        f"Memory error during embedding (batch_size={current_batch_size}): {e}. "
+                        f"Retrying with smaller batch_size={new_batch_size}."
+                    )
+                    current_batch_size = new_batch_size
+
+                    # Try to free device cache between retries (best-effort).
+                    try:
+                        import torch
+                        if torch.cuda.is_available():
+                            torch.cuda.empty_cache()
+                        if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+                            torch.mps.empty_cache()
+                    except Exception:
+                        pass
+                else:
+                    # Non-memory related error: re-raise immediately
+                    raise
     
     def encode(self, texts: List[str] | str, **kwargs) -> np.ndarray:
         """

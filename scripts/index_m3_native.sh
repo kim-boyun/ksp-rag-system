@@ -18,6 +18,9 @@ cd "$PROJECT_ROOT"
 
 INDEX_NAME="ksp_rag_index_m3"
 MODEL="BAAI/bge-m3"
+# MPS 메모리 절약: 임베딩 배치 작게 (OOM 방지). CUDA/메모리 넉넉하면 32 등으로 올려도 됨.
+BATCH_SIZE="${BGE_BATCH_SIZE:-8}"
+INDEX_BATCH_SIZE="${BGE_INDEX_BATCH_SIZE:-2000}"
 ELASTIC_HOST="${ELASTIC_HOST:-localhost}"
 ELASTIC_PORT="${ELASTIC_PORT:-9200}"
 CHUNKS_FILE="data/processed/chunks.jsonl"
@@ -27,6 +30,7 @@ echo "  KSP RAG - bge-m3 네이티브 인덱싱 (MPS/CUDA 자동 감지)"
 echo "============================================================"
 echo "  인덱스명 : $INDEX_NAME  (small 인덱스와 분리)"
 echo "  모델     : $MODEL"
+echo "  배치     : embedding=$BATCH_SIZE, streaming=$INDEX_BATCH_SIZE (MPS OOM 방지)"
 echo "  ES 호스트: $ELASTIC_HOST:$ELASTIC_PORT"
 echo "  청크 파일: $CHUNKS_FILE"
 echo "============================================================"
@@ -87,7 +91,7 @@ else:
 
 # 4) 기존 m3 인덱스 존재 여부 확인
 echo ""
-EXISTS=$(curl -sf -o /dev/null -w "%{http_code}" "http://$ELASTIC_HOST:$ELASTIC_PORT/$INDEX_NAME")
+EXISTS=$(curl -s -o /dev/null -w "%{http_code}" "http://$ELASTIC_HOST:$ELASTIC_PORT/$INDEX_NAME")
 if [ "$EXISTS" = "200" ]; then
     echo "⚠️  기존 인덱스 '$INDEX_NAME' 가 존재합니다. --recreate 로 삭제 후 재생성합니다."
 fi
@@ -105,7 +109,9 @@ $PYTHON_CMD -m ragapp index-elastic \
     --model "$MODEL" \
     --index-name "$INDEX_NAME" \
     --host "$ELASTIC_HOST" \
-    --port "$ELASTIC_PORT"
+    --port "$ELASTIC_PORT" \
+    --batch-size "$BATCH_SIZE" \
+    --index-batch-size "$INDEX_BATCH_SIZE"
 
 echo ""
 echo "============================================================"

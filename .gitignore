@@ -59,10 +59,3 @@ htmlcov/
 # OS
 .DS_Store
 Thumbs.db
-
-# Local dev / tools
-.streamlit/
-/src/ui/.streamlit/
-.cursor/
-
-ksp-indexer.tar.gz

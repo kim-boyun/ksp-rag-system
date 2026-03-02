@@ -91,10 +91,6 @@ class ElasticHybridRetriever(Retriever):
     ) -> List[Document]:
         """
         Retrieve documents using Elasticsearch hybrid search.
-
-        Score = BM25_score * bm25_boost + (cosineSimilarity(query_emb, doc_emb) + 1.0) * dense_boost
-        - BM25: 키워드 매칭 점수 (한국어는 standard 분석기 한계로 낮게 나올 수 있음)
-        - Dense: 0~2 범위 (cosine -1~1 이므로 +1 시 0~2). 둘을 더하므로 절대값이 0.05 같은 작은 수가 나올 수 있음.
         doc_ids, content_types 지정 시 메타데이터 필터 적용.
         """
         config = get_config()

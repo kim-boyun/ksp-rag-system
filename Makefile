@@ -161,7 +161,8 @@ elastic-export: ## Elasticsearch 데이터(인덱스 포함)를 tar로 내보내
 	docker compose --profile server stop elasticsearch
 	@echo "Exporting elastic-data volume to data/elastic-data-backup.tar.gz ..."
 	@mkdir -p data
-	docker compose --profile server run --rm -v elastic-data:/data -v $$(pwd)/data:/backup app tar czf /backup/elastic-data-backup.tar.gz -C /data .
+	# elasticsearch 서비스 컨테이너 안에서, 이미 마운트된 /usr/share/elasticsearch/data 를 그대로 tar
+	docker compose --profile server run --rm -v $$(pwd)/data:/backup elasticsearch sh -c "tar czf /backup/elastic-data-backup.tar.gz -C /usr/share/elasticsearch/data ."
 	@echo "Done. Copy data/elastic-data-backup.tar.gz to the other PC, then run: make elastic-import"
 	docker compose --profile server up -d elasticsearch
 
@@ -171,7 +172,8 @@ elastic-import: ## data/elastic-data-backup.tar.gz 로 Elasticsearch 데이터 �
 	@echo "Stopping Elasticsearch..."
 	docker compose --profile server stop elasticsearch
 	@echo "Importing into elastic-data volume..."
-	docker compose --profile server run --rm -v elastic-data:/data -v $$(pwd)/data:/backup app sh -c "rm -rf /data/* /data/..?* 2>/dev/null; tar xzf /backup/elastic-data-backup.tar.gz -C /data"
+	# elasticsearch 서비스 컨테이너 안에서, ES 데이터 디렉터리에 직접 복원
+	docker compose --profile server run --rm -v $$(pwd)/data:/backup elasticsearch sh -c "rm -rf /usr/share/elasticsearch/data/* /usr/share/elasticsearch/data/..?* 2>/dev/null; tar xzf /backup/elastic-data-backup.tar.gz -C /usr/share/elasticsearch/data"
 	@echo "Starting Elasticsearch..."
 	docker compose --profile server up -d elasticsearch
 	@echo "Done. Wait for ES to be healthy: make elastic-health"

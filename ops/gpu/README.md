@@ -75,7 +75,7 @@ curl http://localhost:8000/v1/models
 curl -X POST http://localhost:8000/v1/completions \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "openai/gpt-oss-120b",
+    "model": "meta-llama/Llama-2-7b-chat-hf",
     "prompt": "Hello, ",
     "max_tokens": 20
   }'
@@ -87,7 +87,7 @@ curl -X POST http://localhost:8000/v1/completions \
 
 | 변수 | 기본값 | 설명 |
 |------|--------|------|
-| `SERVER_LLM_MODEL` | `openai/gpt-oss-120b` | 사용할 LLM 모델 |
+| `SERVER_LLM_MODEL` | `meta-llama/Llama-2-7b-chat-hf` | 사용할 LLM 모델 |
 | `TENSOR_PARALLEL_SIZE` | `1` | 텐서 병렬 크기 |
 | `GPU_MEMORY_UTILIZATION` | `0.9` | GPU 메모리 사용률 (0.0-1.0) |
 | `MAX_MODEL_LEN` | `4096` | 최대 모델 길이 |
