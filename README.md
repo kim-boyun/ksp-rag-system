@@ -24,7 +24,8 @@ Docker 기반 하이브리드 RAG 시스템 (로컬/서버 모드 지원)
 - **운영 서버 (이 레포)**: Elasticsearch + RAG app + Streamlit + 인덱싱/임베딩
 - **GPU 서버 (별도)**: vLLM inference API만 제공 (`ops/gpu/docker-compose.yml`)
 
-**자세한 아키텍처**: [docs/architecture/overview.md](docs/architecture/overview.md)
+**자세한 아키텍처**: [docs/architecture/overview.md](docs/architecture/overview.md)  
+**프로젝트 전체 총정리**: [PROJECT_OVERVIEW.md](PROJECT_OVERVIEW.md) · **문서 인덱스**: [docs/README.md](docs/README.md)
 
 ---
 
