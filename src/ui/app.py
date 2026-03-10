@@ -260,22 +260,31 @@ def _load_pipeline(use_rerank: bool = False) -> bool:
         return False
 
 
-def _patch_config(top_k, rerank_top_k, bm25_boost, dense_boost, min_score):
-    """사이드바 슬라이더 값을 런타임 config에 반영 (인덱스 재빌드 불필요)"""
+def _patch_config(
+    top_k,
+    rerank_top_k,
+    bm25_boost,
+    dense_boost,
+    min_score,
+    use_query_expansion: bool = True,
+    skip_llm_below: float = 0.0,
+):
+    """사이드바 값을 런타임 config에 반영 (인덱스 재빌드 불필요)"""
     config = get_config()
-    try:
-        config.top_k = top_k
-        config.rerank_top_k = rerank_top_k
-        config.elastic_bm25_boost = bm25_boost
-        config.elastic_dense_boost = dense_boost
-        config.retrieval_min_score = min_score
-    except Exception:
-        # pydantic frozen 모델일 경우 setattr 우회
-        object.__setattr__(config, "top_k", top_k)
-        object.__setattr__(config, "rerank_top_k", rerank_top_k)
-        object.__setattr__(config, "elastic_bm25_boost", bm25_boost)
-        object.__setattr__(config, "elastic_dense_boost", dense_boost)
-        object.__setattr__(config, "retrieval_min_score", min_score)
+    attrs = {
+        "top_k": top_k,
+        "rerank_top_k": rerank_top_k,
+        "elastic_bm25_boost": bm25_boost,
+        "elastic_dense_boost": dense_boost,
+        "retrieval_min_score": min_score,
+        "query_expansion_enabled": use_query_expansion,
+        "retrieval_skip_llm_if_max_below": skip_llm_below,
+    }
+    for k, v in attrs.items():
+        try:
+            setattr(config, k, v)
+        except Exception:
+            object.__setattr__(config, k, v)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -348,6 +357,26 @@ def _render_sidebar():
 
         st.divider()
 
+        # ── 쿼리 확장 · 저관련도 LLM 스킵 ─────────────────
+        st.markdown("#### 📐 파이프라인")
+        use_query_expansion = st.toggle(
+            "쿼리 확장 사용",
+            value=st.session_state.get("_use_query_expansion", True),
+            help="동일 의미의 여러 질문으로 검색 후 RRF 병합. recall 향상, 재현성은 낮아짐.",
+        )
+        st.session_state["_use_query_expansion"] = use_query_expansion
+
+        skip_llm_below = st.select_slider(
+            "저관련도 시 LLM 스킵",
+            options=[0.0, 0.02, 0.05],
+            format_func=lambda x: "비활성" if x == 0 else f"{x:.2f} 미만이면 스킵",
+            value=st.session_state.get("_skip_llm_below", 0.0),
+            help="검색 최고 점수가 이 값 미만이면 LLM 호출 없이 고정 메시지 반환 (RRF 시 0.02~0.05 권장)",
+        )
+        st.session_state["_skip_llm_below"] = skip_llm_below
+
+        st.divider()
+
         # ── 리랭킹 토글 ────────────────────────────────
         use_rerank = st.toggle(
             "리랭킹 사용",
@@ -390,7 +419,7 @@ def _render_sidebar():
                 st.caption(f"검색: `{retriever_label}`")
                 st.caption(f"LLM: `{llm_model}`")
 
-    return top_k, rerank_top_k, bm25_boost, dense_boost, min_score, use_rerank
+    return top_k, rerank_top_k, bm25_boost, dense_boost, min_score, use_rerank, use_query_expansion, skip_llm_below
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -408,7 +437,7 @@ def main():
             st.session_state.config = None
 
     # 사이드바 렌더
-    top_k, rerank_top_k, bm25_boost, dense_boost, min_score, use_rerank = _render_sidebar()
+    top_k, rerank_top_k, bm25_boost, dense_boost, min_score, use_rerank, use_query_expansion, skip_llm_below = _render_sidebar()
 
     # ── 파이프라인 초기화 ────────────────────────────────
     if st.session_state.pipeline is None:
@@ -424,17 +453,23 @@ def main():
                 _render_source_docs(msg["docs"], msg.get("citations", []))
 
     # ── 사용자 입력 ──────────────────────────────────────
-    if prompt := st.chat_input("궁금한 내용을 입력하세요…"):
+    prompt = st.chat_input("궁금한 내용을 입력하세요…")
+    if prompt is not None and (prompt := prompt.strip()):
+        # 빈 입력은 무시 (공백만 있는 경우 포함)
 
         # 사용자 메시지 추가 & 출력
         st.session_state.messages.append({"role": "user", "content": prompt})
         with st.chat_message("user"):
             st.markdown(prompt)
 
-        # config 런타임 패치 (슬라이더 값 반영)
-        _patch_config(top_k, rerank_top_k, bm25_boost, dense_boost, min_score)
+        # config 런타임 패치 (슬라이더·토글 값 반영)
+        _patch_config(
+            top_k, rerank_top_k, bm25_boost, dense_boost, min_score,
+            use_query_expansion=use_query_expansion,
+            skip_llm_below=skip_llm_below,
+        )
 
-        # 답변 생성
+        # 답변 생성 (스트리밍 중에는 "생성 중"만 표시, 완료 후 정리된 최종 답만 표시)
         with st.chat_message("assistant"):
             placeholder = st.empty()
             try:
@@ -442,14 +477,15 @@ def main():
                     prompt, use_rerank=use_rerank
                 )
 
-                # 스트리밍 출력
+                # 스트리밍: 원문(추론 과정 등)을 보이지 않고, "답변 생성 중..."만 표시
                 accumulated = ""
                 for chunk in stream_gen:
                     accumulated += chunk
-                    placeholder.markdown(accumulated + "▌")
+                    placeholder.markdown("답변 생성 중… ▌")
 
                 response = result_holder.get("response")
                 final_answer = response.answer if response else accumulated
+                # 완료 후 정리된 최종 답변만 한 번에 표시 (clean_rag_answer 적용된 결과)
                 placeholder.markdown(final_answer)
 
                 # 참고 문서 표시 & 히스토리 저장

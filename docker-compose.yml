@@ -13,7 +13,7 @@ services:
       - PYTHONDONTWRITEBYTECODE=1  # Python 캐시 비활성화
     volumes:
       - ./:/app  # 전체 프로젝트 마운트 (dev 편의)
-      - model-cache:/root/.cache/huggingface  # 임베딩 모델 캐시
+      - ./data/model-cache:/root/.cache/huggingface  # 임베딩 모델 캐시 (프로젝트 = 외장 SSD)
     networks:
       - rag-network
     profiles:
@@ -39,7 +39,7 @@ services:
     ports:
       - "9200:9200"
     volumes:
-      - elastic-data:/usr/share/elasticsearch/data
+      - ./data/elastic-data:/usr/share/elasticsearch/data  # 프로젝트 내 저장 = 외장 SSD
     networks:
       - rag-network
     profiles:
@@ -87,7 +87,7 @@ services:
     volumes:
       - ./src:/app/src
       - ./data:/app/data
-      - model-cache:/root/.cache/huggingface
+      - ./data/model-cache:/root/.cache/huggingface
     ports:
       - "8501:8501"
     networks:
@@ -103,6 +103,4 @@ networks:
   rag-network:
     driver: bridge
 
-volumes:
-  elastic-data:
-  model-cache:     # 임베딩 모델 캐시
+# 볼륨은 사용하지 않음. data/elastic-data, data/model-cache 로 프로젝트(외장 SSD)에 저장

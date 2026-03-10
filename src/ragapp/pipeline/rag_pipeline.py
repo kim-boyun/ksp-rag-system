@@ -66,13 +66,22 @@ class RAGPipeline:
         mode = self.config.mode
         top_k = self.config.top_k
 
-        # Cache lookup
+        # Cache lookup (설정 변경 시 스태일 캐시 방지를 위해 use_rerank·검색 파라미터 포함)
+        retrieval_params = (
+            f"{self.config.elastic_bm25_boost}|{self.config.elastic_dense_boost}"
+            f"|{self.config.retrieval_min_score}|{self.config.retrieval_skip_llm_if_max_below}"
+            f"|{self.config.query_expansion_enabled}"
+        )
         if self.config.cache_enabled:
             cache = get_cache(
                 max_size=self.config.cache_max_size,
                 ttl_seconds=self.config.cache_ttl_seconds,
             )
-            cached = get_cached_response(query, mode, top_k, cache)
+            cached = get_cached_response(
+                query, mode, top_k, cache,
+                use_rerank=use_rerank,
+                retrieval_params=retrieval_params,
+            )
             if cached is not None:
                 return cached
 
@@ -106,9 +115,51 @@ class RAGPipeline:
         else:
             reranked_docs = retrieved_docs
 
-        # Step 3: Generate
+        # Step 2.5: 검색 결과 없거나, 최고 점수가 임계값 미만이면 LLM 호출 없이 고정 메시지 반환
+        no_docs_message = (
+            "제공된 문서에서 관련 정보를 찾을 수 없습니다. "
+            "질문을 바꾸거나 담당자에게 문의해 주세요."
+        )
+        if not reranked_docs:
+            return RAGResponse(
+                answer=no_docs_message,
+                retrieved_docs=[],
+                metadata={
+                    "mode": mode,
+                    "retriever": self.config.get_retriever_type(),
+                    "llm_provider": self.config.llm_provider,
+                    "rerank_enabled": use_rerank,
+                    "num_docs": 0,
+                    "skipped_llm": True,
+                },
+            )
+        skip_threshold = self.config.retrieval_skip_llm_if_max_below
+        if skip_threshold > 0:
+            best_score = max(d.score for d in reranked_docs)
+            if best_score < skip_threshold:
+                logger.info(f"Skipping LLM: best retrieval score {best_score:.4f} < {skip_threshold}")
+                return RAGResponse(
+                    answer=no_docs_message,
+                    retrieved_docs=reranked_docs,
+                    metadata={
+                        "mode": mode,
+                        "retriever": self.config.get_retriever_type(),
+                        "llm_provider": self.config.llm_provider,
+                        "rerank_enabled": use_rerank,
+                        "num_docs": len(reranked_docs),
+                        "skipped_llm": True,
+                        "best_score_below_threshold": best_score,
+                    },
+                )
+
+        # Step 3: Generate (system 프롬프트 적용)
         prompt = self._build_prompt(query, reranked_docs)
-        answer = self.llm.generate(prompt, max_tokens=self.config.llm_max_tokens)
+        system_prompt = self._load_system_prompt()
+        answer = self.llm.generate(
+            prompt,
+            max_tokens=self.config.llm_max_tokens,
+            system_prompt=system_prompt,
+        )
         from ragapp.prompts import clean_rag_answer
         answer = clean_rag_answer(answer)
         logger.info("Generated answer")
@@ -131,7 +182,11 @@ class RAGPipeline:
                 max_size=self.config.cache_max_size,
                 ttl_seconds=self.config.cache_ttl_seconds,
             )
-            set_cached_response(query, mode, top_k, response, cache)
+            set_cached_response(
+                query, mode, top_k, response, cache,
+                use_rerank=use_rerank,
+                retrieval_params=retrieval_params,
+            )
 
         return response
 
@@ -172,20 +227,66 @@ class RAGPipeline:
         else:
             reranked_docs = retrieved_docs
 
+        no_docs_message = (
+            "제공된 문서에서 관련 정보를 찾을 수 없습니다. "
+            "질문을 바꾸거나 담당자에게 문의해 주세요."
+        )
+        if not reranked_docs:
+            def gen_empty():
+                yield no_docs_message
+            result_holder["response"] = RAGResponse(
+                answer=no_docs_message,
+                retrieved_docs=[],
+                metadata={
+                    "mode": mode,
+                    "retriever": self.config.get_retriever_type(),
+                    "llm_provider": self.config.llm_provider,
+                    "rerank_enabled": use_rerank,
+                    "num_docs": 0,
+                    "skipped_llm": True,
+                },
+            )
+            return gen_empty(), result_holder
+        skip_threshold = self.config.retrieval_skip_llm_if_max_below
+        if skip_threshold > 0:
+            best_score = max(d.score for d in reranked_docs)
+            if best_score < skip_threshold:
+                def gen_skip():
+                    yield no_docs_message
+                result_holder["response"] = RAGResponse(
+                    answer=no_docs_message,
+                    retrieved_docs=reranked_docs,
+                    metadata={
+                        "mode": mode,
+                        "retriever": self.config.get_retriever_type(),
+                        "llm_provider": self.config.llm_provider,
+                        "rerank_enabled": use_rerank,
+                        "num_docs": len(reranked_docs),
+                        "skipped_llm": True,
+                        "best_score_below_threshold": best_score,
+                    },
+                )
+                return gen_skip(), result_holder
+
         prompt = self._build_prompt(query, reranked_docs)
+        system_prompt = self._load_system_prompt()
         from ragapp.prompts import clean_rag_answer
 
         def gen() -> Generator[str, None, None]:
             full: List[str] = []
             if hasattr(self.llm, "generate_stream"):
                 for chunk in self.llm.generate_stream(
-                    prompt, max_tokens=self.config.llm_max_tokens
+                    prompt,
+                    max_tokens=self.config.llm_max_tokens,
+                    system_prompt=system_prompt,
                 ):
                     full.append(chunk)
                     yield chunk
             else:
                 text = self.llm.generate(
-                    prompt, max_tokens=self.config.llm_max_tokens
+                    prompt,
+                    max_tokens=self.config.llm_max_tokens,
+                    system_prompt=system_prompt,
                 )
                 full.append(text)
                 yield text
@@ -203,6 +304,14 @@ class RAGPipeline:
             )
 
         return gen(), result_holder
+
+    def _load_system_prompt(self) -> str:
+        """Load system prompt from prompts/system.txt"""
+        try:
+            from ragapp.prompts import load_prompt
+            return load_prompt("system")
+        except FileNotFoundError:
+            return ""
 
     def _build_prompt(self, query: str, documents: List[Document]) -> str:
         """Build LLM prompt from query and documents"""
@@ -300,7 +409,7 @@ class RAGPipeline:
     def _create_placeholder_llm(self) -> LLMClient:
         """Create placeholder LLM"""
         class PlaceholderLLM:
-            def generate(self, prompt: str, max_tokens: int = 1000) -> str:
+            def generate(self, prompt: str, max_tokens: int = 1000, **kwargs) -> str:
                 logger.warning("Using placeholder LLM")
                 return f"[Placeholder answer] This is a mock response. In production, this would be generated by {get_config().llm_provider}."
         

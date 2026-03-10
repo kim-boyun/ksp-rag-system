@@ -54,6 +54,7 @@ class LocalAPIClient(BaseLLM):
         prompt: str,
         max_tokens: int = None,
         temperature: float = None,
+        system_prompt: str = None,
         **kwargs
     ) -> str:
         """
@@ -63,10 +64,17 @@ class LocalAPIClient(BaseLLM):
             prompt: Input prompt
             max_tokens: Maximum tokens (uses config default if None)
             temperature: Temperature (uses config default if None)
+            system_prompt: Optional system message (when set, uses chat with [system, user])
             
         Returns:
             Generated text
         """
+        if system_prompt:
+            messages = [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": prompt},
+            ]
+            return self.chat(messages, max_tokens, temperature, **kwargs)
         messages = [{"role": "user", "content": prompt}]
         return self.chat(messages, max_tokens, temperature, **kwargs)
 
@@ -75,10 +83,13 @@ class LocalAPIClient(BaseLLM):
         prompt: str,
         max_tokens: int = None,
         temperature: float = None,
+        system_prompt: str = None,
         **kwargs
     ) -> Iterator[str]:
         """Generate text from prompt, yielding chunks."""
         messages = [{"role": "user", "content": prompt}]
+        if system_prompt:
+            messages = [{"role": "system", "content": system_prompt}] + messages
         max_tokens = max_tokens or self.max_tokens
         temperature = temperature or self.temperature
         try:

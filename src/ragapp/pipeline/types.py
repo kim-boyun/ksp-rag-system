@@ -71,13 +71,14 @@ class LLMClient(Protocol):
     Implementations: OpenAIClient, vLLMClient
     """
     
-    def generate(self, prompt: str, max_tokens: int = 1000) -> str:
+    def generate(self, prompt: str, max_tokens: int = 1000, **kwargs) -> str:
         """
         Generate text using LLM
         
         Args:
             prompt: Input prompt
             max_tokens: Maximum tokens to generate
+            **kwargs: e.g. system_prompt for chat-style system message
             
         Returns:
             Generated text

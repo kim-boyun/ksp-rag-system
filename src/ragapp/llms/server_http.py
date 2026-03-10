@@ -54,6 +54,7 @@ class ServerHTTPClient(BaseLLM):
         prompt: str,
         max_tokens: int = None,
         temperature: float = None,
+        system_prompt: str = None,
         **kwargs
     ) -> str:
         """
@@ -63,12 +64,20 @@ class ServerHTTPClient(BaseLLM):
             prompt: Input prompt
             max_tokens: Maximum tokens
             temperature: Temperature
+            system_prompt: Optional system message (when set, uses chat with [system, user])
             
         Returns:
             Generated text
         """
         max_tokens = max_tokens or self.max_tokens
         temperature = temperature or self.temperature
+        
+        if system_prompt:
+            messages = [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": prompt},
+            ]
+            return self.chat(messages, max_tokens, temperature, **kwargs)
         
         # vLLM completions API format
         payload = {
@@ -104,11 +113,14 @@ class ServerHTTPClient(BaseLLM):
         prompt: str,
         max_tokens: int = None,
         temperature: float = None,
+        system_prompt: str = None,
         **kwargs
     ) -> Iterator[str]:
         """Generate text from prompt, yielding chunks (SSE)."""
         max_tokens = max_tokens or self.max_tokens
         temperature = temperature or self.temperature
+        if system_prompt:
+            prompt = f"System: {system_prompt}\n\nUser: {prompt}\n\nAssistant:"
         payload = {
             "model": self.model,
             "prompt": prompt,

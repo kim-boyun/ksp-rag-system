@@ -111,19 +111,19 @@ class LLMReranker(BaseReranker):
         # Truncate document to avoid token limits
         doc_preview = document[:1000]
         
-        prompt = f"""다음 문서가 주어진 질문에 얼마나 관련이 있는지 0에서 100 사이의 점수로 평가하세요.
+        prompt = f"""다음 문서(앞 1000자 기준, 잘렸을 수 있음)가 주어진 질문에 얼마나 관련이 있는지 0에서 100 사이의 점수로 평가하세요.
 
 질문: {query}
 
 문서: {doc_preview}
 
-점수만 숫자로 답하세요 (0-100):"""
+0-100 사이의 정수 하나만 출력하세요. 다른 설명 없이 숫자만 출력하세요."""
         
         try:
             response = self.client.chat.completions.create(
                 model=self.model,
                 messages=[
-                    {"role": "system", "content": "You are a relevance scoring assistant. Only output a number between 0-100."},
+                    {"role": "system", "content": "당신은 관련도 채점 보조입니다. 0-100 사이의 정수 하나만 출력하세요. 다른 텍스트는 출력하지 마세요."},
                     {"role": "user", "content": prompt}
                 ],
                 temperature=0.0,

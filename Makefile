@@ -92,11 +92,7 @@ ingest-tables: ## 문서 인제스트 (표 포함)
 # 인덱스 빌드
 # ================================
 
-index-local: ## Elasticsearch 인덱스 빌드 (.env.local 사용)
-	cp .env.local .env
-	docker compose --profile server run --rm app python -m ragapp index-elastic
-
-index-small: ## Elasticsearch 인덱스 빌드 (작은 임베딩 모델)
+index-local: ## Elasticsearch 인덱스 빌드 (.env 사용, BGE-M3)
 	cp .env.local .env
 	docker compose --profile server run --rm app python -m ragapp index-elastic
 
@@ -129,15 +125,6 @@ ask-server: ask-elastic ## RAG 질의응답 (서버 모드)
 
 index: index-local ## Elasticsearch 인덱스 빌드 (기본=index-local)
 
-index-small: ## 작은 모델로 빠르게 인덱스 빌드
-	docker compose --profile local run --rm app python -m ragapp index \
-		--model BAAI/bge-small-en-v1.5 \
-		--batch-size 16
-
-index-sample: ## (미지원) Elastic 기본화로 로컬 샘플 인덱스는 제거됨. make index-local 사용
-	@echo "로컬 FAISS 샘플 인덱스는 더 이상 지원하지 않습니다. make index-local 로 Elasticsearch 인덱스를 빌드하세요."
-	@exit 1
-
 # ================================
 # Elasticsearch 관리
 # ================================
@@ -151,6 +138,18 @@ elastic-down: ## Elasticsearch 서비스 중지
 elastic-health: ## Elasticsearch 헬스체크
 	@echo "Checking Elasticsearch health..."
 	@curl -s http://localhost:9200/_cluster/health?pretty || echo "❌ Elasticsearch not running"
+
+elastic-index-status: ## 인덱스 목록 + 문서 수 확인
+	@echo "=== 인덱스 목록 & 문서 수 ==="
+	@curl -s http://localhost:9200/_cat/indices?v 2>/dev/null || (echo "❌ Elasticsearch not running"; exit 1)
+	@echo ""
+	@echo "=== ksp_rag_index_m3 문서 수 ==="
+	@curl -s http://localhost:9200/ksp_rag_index_m3/_count?pretty 2>/dev/null || true
+
+elastic-index-model: ## 현재 인덱스 임베딩 차원 확인 (BGE-M3 = 1024)
+	@echo "=== ksp_rag_index_m3 (BGE-M3) ==="
+	@curl -s http://localhost:9200/ksp_rag_index_m3/_mapping?pretty 2>/dev/null | grep -A2 '"embedding"' || echo "  (인덱스 없음)"
+	@echo "  dims=1024 → BGE-M3"
 
 elastic-logs: ## Elasticsearch 로그 확인
 	docker compose logs -f elasticsearch
@@ -259,11 +258,6 @@ llm-test: ## 외부 LLM 테스트 요청 (.env.server의 SERVER_LLM_MODEL 사용
 # Streamlit UI
 # ================================
 
-ui: ## Streamlit UI 시작 (Elasticsearch + 개인 LLM)
-	@test -f .env.local || (echo "Create .env.local from .env.local.example and set LLM_API_KEY"; exit 1)
-	cp .env.local .env
-	docker compose --profile server --profile ui up
-
 ui-local: ## Streamlit UI (Elasticsearch + 개인 LLM, 백그라운드)
 	@test -f .env.local || (echo "Create .env.local from .env.local.example and set LLM_API_KEY"; exit 1)
 	cp .env.local .env
@@ -275,8 +269,6 @@ ui-server: ## Streamlit UI (서버 모드, 백그라운드)
 	docker compose --profile ui up -d
 	@echo "Streamlit UI: http://localhost:8501"
 
-ui-elastic-local-llm: ui-local ## (별칭) Elasticsearch 검색 + 개인 LLM
-
 ui-down: ## Streamlit UI 중지
 	docker compose --profile ui down
 
@@ -287,32 +279,18 @@ ui-logs: ## Streamlit UI 로그
 # Elasticsearch 인덱스
 # ================================
 
-index-elastic: ## Elasticsearch 인덱스 빌드 (.env.server 사용)
+index-elastic: ## Elasticsearch 인덱스 빌드 (BGE-M3, .env.server)
 	cp .env.server .env
 	docker compose --profile server run --rm app python -m ragapp index-elastic
 
-index-elastic-recreate: ## Elasticsearch 인덱스 재생성 (.env.server 사용, 기본 BGE-M3)
+index-elastic-recreate: ## Elasticsearch 인덱스 재생성 (BGE-M3, 기존 인덱스 삭제 후 재구축)
 	cp .env.server .env
 	docker compose --profile server run --rm app python -m ragapp index-elastic --recreate
 
-index-elastic-small: ## Elasticsearch 인덱스 빌드 (bge-small, 빠름)
-	cp .env.server .env
-	docker compose --profile server run --rm app python -m ragapp index-elastic --model BAAI/bge-small-en-v1.5
-
-index-elastic-recreate-small: ## Elasticsearch 인덱스 재생성 (bge-small, 빠름)
-	cp .env.server .env
-	docker compose --profile server run --rm app python -m ragapp index-elastic --recreate --model BAAI/bge-small-en-v1.5
-
-index-elastic-m3-native: ## [M4/GPU 네이티브] bge-m3로 ksp_rag_index_m3 인덱스 생성 (MPS/CUDA 자동 감지, Docker 없이 실행)
-	@echo "⚠️  네이티브 실행: Docker 아님 (MPS/CUDA 자동 감지)"
-	@echo "   Elasticsearch는 별도로 실행 중이어야 합니다 (docker compose --profile server up elasticsearch -d)"
-	@echo "   인덱스명: ksp_rag_index_m3 (기존 small 인덱스와 분리)"
+index-elastic-native: ## [선택] 네이티브에서 M3 인덱스 빌드 (Docker 없이, MPS/CUDA 사용 시)
+	@echo "Elasticsearch는 별도 실행 중이어야 합니다. make elastic-up"
 	ELASTIC_HOST=localhost ELASTIC_INDEX_NAME=ksp_rag_index_m3 \
-		poetry run python -m ragapp index-elastic \
-		--recreate \
-		--model BAAI/bge-m3 \
-		--index-name ksp_rag_index_m3 \
-		--host localhost
+		poetry run python -m ragapp index-elastic --recreate --model BAAI/bge-m3 --host localhost
 
 # ================================
 # 검색 / RAG
@@ -331,19 +309,12 @@ retrieve-json: ## 검색 결과 JSON 저장
 	docker compose --profile server run --rm app python -m ragapp retrieve "$(Q)" --mode elastic \
 		--output results_retrieve.json
 
-retrieve-sample: ## (미지원) 로컬 샘플 인덱스 제거됨. make retrieve 사용
-	@echo "로컬 샘플 인덱스는 더 이상 지원하지 않습니다. make retrieve Q=\"질문\" 사용하세요."
-	@exit 1
-
-retrieve-elastic: ## Elasticsearch 검색 (.env.server 사용) - 사용: make retrieve-elastic Q="질문"
+retrieve-elastic: ## Elasticsearch 검색 - 사용: make retrieve-elastic Q="질문"
 	cp .env.server .env
 	docker compose --profile server run --rm app python -m ragapp retrieve "$(Q)" --mode elastic
 
 retrieve-elastic-rerank: ## Elasticsearch + 리랭크
 	docker compose --profile server run --rm app python -m ragapp retrieve "$(Q)" --mode elastic --rerank
-
-ask-elastic: ## Elasticsearch 기반 RAG
-	docker compose --profile server run --rm app python -m ragapp ask "$(Q)"
 
 # ================================
 # 개발 & 테스트

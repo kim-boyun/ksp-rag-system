@@ -11,8 +11,16 @@ from loguru import logger
 from ragapp.pipeline.types import RAGResponse, Document
 
 
-def _cache_key(query: str, mode: str, top_k: int) -> str:
-    raw = f"{query.strip().lower()}|{mode}|{top_k}"
+def _cache_key(
+    query: str,
+    mode: str,
+    top_k: int,
+    *,
+    use_rerank: bool = False,
+    retrieval_params: str = "",
+) -> str:
+    """캐시 키: 질문·모드·top_k·리랭크·검색 파라미터 해시. UI에서 설정 변경 시 스태일 캐시 방지."""
+    raw = f"{query.strip().lower()}|{mode}|{top_k}|{use_rerank}|{retrieval_params}"
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
@@ -87,10 +95,13 @@ def get_cached_response(
     mode: str,
     top_k: int,
     cache: ResponseCache,
+    *,
+    use_rerank: bool = False,
+    retrieval_params: str = "",
 ) -> Optional[RAGResponse]:
     if not query or not query.strip():
         return None
-    key = _cache_key(query, mode, top_k)
+    key = _cache_key(query, mode, top_k, use_rerank=use_rerank, retrieval_params=retrieval_params)
     data = cache.get(key)
     if data is None:
         return None
@@ -104,9 +115,12 @@ def set_cached_response(
     top_k: int,
     response: RAGResponse,
     cache: ResponseCache,
+    *,
+    use_rerank: bool = False,
+    retrieval_params: str = "",
 ) -> None:
     if not query or not query.strip():
         return
-    key = _cache_key(query, mode, top_k)
+    key = _cache_key(query, mode, top_k, use_rerank=use_rerank, retrieval_params=retrieval_params)
     cache.set(key, _response_to_dict(response))
     logger.debug("Cached response for query")
